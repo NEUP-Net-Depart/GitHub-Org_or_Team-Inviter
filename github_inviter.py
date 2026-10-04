@@ -593,11 +593,18 @@ def resolve_input(args: argparse.Namespace) -> InputSource:
 
 
 def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
-    rows = read_table(target, args.sheet)
-    if not rows:
+    all_rows = read_table(target, args.sheet)
+    if not all_rows:
         die(f"{target}: 表格是空的。")
-    if not any(str(cell).strip() for row in rows for cell in row):
+    if not any(str(cell).strip() for row in all_rows for cell in row):
         die(f"{target}: 表格里没有任何内容。")
+
+    # 先用 --skip-rows 砍掉开头几行(比如认不出来的表头)。
+    # --cols 给的是「数据列的序号」, 所以它和表头行各管各的、互不干扰。
+    skip = max(0, int(getattr(args, "skip_rows", 0) or 0))
+    if skip >= len(all_rows):
+        die(f"--skip-rows {skip} 超过表里的行数(共 {len(all_rows)} 行), 没数据可处理了。")
+    rows = all_rows[skip:]
 
     width = max((len(row) for row in rows), default=0)
     cols = _blank_cols()
@@ -610,6 +617,11 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
             die(f'--cols "{args.cols}" 里没有一列是 email 或 username, 没东西可发。\n'
                 f'每项只能填 username / email / name, 不想用的列写 "-" 占位。\n'
                 f'例如: --cols "name,email,username"')
+        # --cols 是按位置指定数据列, 它本身不判断哪一行是表头。表格开头若还有一行
+        # 表头, 那一行会被当成数据。这里不做猜测(猜错代价更大), 只把规则说清楚。
+        if not skip and not args.no_header:
+            log("  ! 用了 --cols: 表头行不会被自动跳过。第 1 行是表头就加 --skip-rows 1; "
+                "第 1 行就是数据则忽略本行。")
     elif args.no_header:
         cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
     else:
@@ -637,6 +649,20 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
     for record in records:
         record.row += first_data   # 换算回表里的真实行号
 
+    # 保险: 表头没认出来时会退回「按位置」兜底(第1列用户名、第2列邮箱)。如果实际表格
+    # 的列不是这个顺序, 邮箱列里就会装满"不是邮箱"的值 —— 这时宁可停下问清楚,
+    # 也不要静默按错误的列发出去。
+    if not args.cols and records:
+        mismatched = sum(1 for r in records
+                         if any("邮箱列里写的不是邮箱" in n for n in r.notes))
+        if mismatched * 2 > len(records):
+            die("表头没认出来, 按「第1列用户名、第2列邮箱」兜底也对不上 —— "
+                f"{len(records)} 行里有 {mismatched} 行的邮箱列看着不是邮箱。\n"
+                f"表头是: {' | '.join(str(c) for c in (header or rows[0]))}\n"
+                "请用 --cols 按位置说明数据列(位置从 1 开始, 不用的列写 '-'), 例如:\n"
+                '  --cols "-,username,email,name,-"\n'
+                "如果第 1 行是表头, 再加上 --skip-rows 1 把它跳过。")
+
     return InputSource(
         records=records,
         columns=cols,
@@ -644,7 +670,7 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
         origin=f"表格 {Path(target).name}",
         table_path=Path(target),
         data_rows=len(data_rows),
-        file_rows=len(rows),
+        file_rows=len(all_rows),
     )
 
 
@@ -1342,6 +1368,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     table.add_argument("--sheet", default="", help="xlsx 的工作表名, 默认第一个")
     table.add_argument("--no-header", action="store_true",
                        help="强制把第一行当数据(第1列用户名、第2列邮箱), 不做表头识别")
+    table.add_argument("--skip-rows", type=int, default=0, metavar="N",
+                       help="跳过表格开头的 N 行再解析(配 --cols 用: 表头认不出时跳过表头行)")
 
     run = parser.add_argument_group("执行")
     run.add_argument("--execute", action="store_true",

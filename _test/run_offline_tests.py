@@ -7,8 +7,10 @@
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,6 +59,8 @@ def check(title: str, args: list[str], must_have: list[str] = (),
 
 def main() -> int:
     std = str(FIX / "standard.csv")
+    # 运行时造的测试表放临时目录, 跑完就没了 —— 免得 _test/ 里堆一堆生成物
+    tmp_dir = Path(tempfile.mkdtemp(prefix="inviter-offline-"))
 
     # --- 1. 表头自动识别 ---
     check("表头识别三列",
@@ -114,6 +118,34 @@ def main() -> int:
           ["--org", "o", "--no-preflight", std, "--cols", "-,-,-"],
           must_have=["没有一列是 email 或 username"], expect_code=2)
 
+    # --- 3.5 --skip-rows: 表头认不出来时跳过表头行 ---
+    # 场景: 表头写成「日期,QQ,微信,怎么称呼,备注」—— 一个列名都认不出
+    weird = tmp_dir / "weird_header.csv"
+    weird.write_text("日期,QQ,微信,怎么称呼,备注\n"
+                     "2026-03-01,zhangsan,zhangsan@example.com,张三,组长\n"
+                     "2026-03-01,lisi-2026,lisi@example.com,李四,\n",
+                     encoding="utf-8")
+    check("--cols 配 --skip-rows 1 跳过认不出的表头",
+          ["--org", "o", "--no-preflight", str(weird),
+           "--cols", "-,username,email,name,-", "--skip-rows", "1"],
+          must_have=["邮箱=<第 3 列>", "用户名=<第 2 列>", "姓名=<第 4 列>",
+                     "待处理 2 条", "张三", "李四"],
+          must_not=["怎么称呼", "格式可疑"], expect_code=0)
+    check("--cols 尾部写多余 '-' 也接受",
+          ["--org", "o", "--no-preflight", str(weird),
+           "--cols", "-,username,email,name,-", "--skip-rows", "1"],
+          must_have=["待处理 2 条"], expect_code=0)
+    check("--cols 不配 --skip-rows 时提醒表头行不会被跳过",
+          ["--org", "o", "--no-preflight", str(weird),
+           "--cols", "-,username,email,name,-"],
+          must_have=["表头行不会被自动跳过", "--skip-rows 1"], expect_code=0)
+    check("认不出表头且没给 --cols 时要停下问清楚(不静默按错的列发)",
+          ["--org", "o", "--no-preflight", str(weird)],
+          must_have=["兜底也对不上", "--cols", "--skip-rows 1"], expect_code=2)
+    check("--skip-rows 超过总行数要报错",
+          ["--org", "o", "--no-preflight", std, "--skip-rows", "999"],
+          must_have=["超过表里的行数"], expect_code=2)
+
     # --- 4. csv 变体 ---
     check("分号分隔 + 中文表头",
           ["--org", "o", "--no-preflight", str(FIX / "semicolon.csv")],
@@ -165,7 +197,7 @@ def main() -> int:
           must_have=["找不到表格文件"], expect_code=2)
 
     # --- 8. .txt 与标准输入已不再支持 ---
-    txt = FIX / "legacy_list.txt"
+    txt = tmp_dir / "legacy_list.txt"
     txt.write_text("alice\nbob\n", encoding="utf-8")
     check(".txt 名单给出明确的迁移提示",
           ["--org", "o", "--no-preflight", str(txt)],
@@ -219,6 +251,7 @@ def main() -> int:
     print(f"\n===== 结果: 通过 {len(PASS)} / 失败 {len(FAIL)} =====")
     for title in FAIL:
         print(f"  失败: {title}")
+    shutil.rmtree(tmp_dir, ignore_errors=True)
     return 1 if FAIL else 0
 
 
