@@ -1,143 +1,254 @@
 # GitHub 组织 / Team 批量邀请
 
-一个脚本, 一份名单, 两件事: **批量发组织邀请**, 顺手**把人加进 Team**。
+一个脚本，把人批量邀请进 GitHub 组织，顺手把人加进 Team。
+**默认不会发任何东西**，加 `--execute` 才真正发送。
 
-## 使用前提
+---
 
-1. **你自己得是这个组织的 owner**(或至少是该 Team 的 maintainer)。
-2. **跑之前关掉系统代理**(Clash / v2ray 之类的「系统代理」开关)。
-   这是实测过的: 走系统代理成功率 42%, 直连 100%。代理开着时典型症状是满屏
-   重试, 
-   或者 `SSL: UNEXPECTED_EOF_WHILE_READING`。
-3. 建一个 token, 然后**创建脚本同目录的 `token.txt`**，并将token直接写入第一行，其他什么都不要有。
+## 一、使用前提
 
-   | token 类型 | 需要的权限 |
-   |---|---|
-   | 细粒度 (推荐) | Organization permissions → **Members** → Read and write |
-   | 经典 | `admin:org` |
+**1. 你得是这个组织的 owner**（或至少是该 Team 的 maintainer）。不是 owner 会回 404 / 403。
 
-   > 细粒度 token 还要组织那边**批准**一下: 组织 Settings → Personal access tokens。
-   > 没批准的话调用会一直失败。
+**2. 关掉系统代理**（Clash / v2ray 之类的「系统代理」开关）。
 
-**默认是 dry-run** —— 不加 `--execute` 绝不发出任何邀请, 只解析名单、做预检、打印计划。
+> 实测结论：走系统代理成功率 **42%**，直连 **100%**。
+> 代理开着时典型症状是满屏重试，或者 `SSL: UNEXPECTED_EOF_WHILE_READING`。
 
-## 命令
+**3. 建一个 token，把 token 直接写进脚本同目录的 `token.txt` 第一行，其他什么都不要有。**
+
+去 <https://github.com/settings/tokens> 建：
+
+| token 类型 | 需要的权限 |
+|---|---|
+| 细粒度（推荐） | Organization permissions → **Members** → Read and write |
+| 经典 | `admin:org` |
+
+> 细粒度 token 还要**组织那边批准**一下：组织 Settings → Personal access tokens → Pending requests。
+> 没批准的话调用会一直失败。
+>
+> `token.txt` 已被 `.gitignore` 挡住，不会误提交。
+
+**环境**：Python 3.10+，**不需要装任何第三方库**。
+
+---
+
+## 二、你的输入怎么写
+
+三种输入随便挑一种。**示例文件都在 [`docs/examples/`](docs/examples/)**，照着改就行。
+
+### 方式 1：给一张表（.xlsx / .csv / .tsv）——最常用
+
+推荐的表结构（**列顺序任意**，脚本按表头名字认列）：
+
+| 姓名 | 邮箱 | GitHub用户名 |
+|---|---|---|
+| 张三 | zhangsan@example.com | zhangsan |
+| 李四 | lisi@example.com | lisi-2026 |
+| 王五 | wangwu@example.com | |
+| 赵六 | | zhaoliu |
+
+示例文件：[`收集表示例.csv`](docs/examples/收集表示例.csv) · [`收集表示例.xlsx`](docs/examples/收集表示例.xlsx)
+
+- **姓名**：只用来在结果里显示是谁，不参与匹配账号
+- **邮箱 / GitHub用户名**：至少要有一个。两个都有最稳
+- 表里**可以只填邮箱**（示例 [`只有姓名和邮箱.csv`](docs/examples/只有姓名和邮箱.csv)）——
+  能发，但只有邮箱时对方必须已把该邮箱验证到自己账号上才点得动邀请（见第五节）
+
+列名认这些，中英文都行：
+
+| 用途 | 认得的表头 |
+|---|---|
+| 姓名 | `姓名` `名字` `昵称` `name` `nickname` |
+| 邮箱 | `邮箱` `电子邮箱` `邮件` `email` `mail` |
+| GitHub用户名 | `GitHub用户名` `用户名` `账号` `username` `login` |
+
+**列顺序完全不用管**，只要表头名字在上面这张表里就认得出。比如这样也对
+（示例 [`列顺序不一样.csv`](docs/examples/列顺序不一样.csv)）：
+
+| 提交时间 | GitHub用户名 | 邮箱 | 姓名 | 备注 |
+|---|---|---|---|---|
+| 2026-03-01 | zhangsan | zhangsan@example.com | 张三 | 组长 |
+
+**表头认不出来时**（比如列名写的是「QQ」「微信」），用 `--cols` 按**位置**说明，
+位置从 **1** 开始数，不用的列写 `-`：
 
 ```bash
-# 0. 先看一眼组织现状(只读, 不改任何东西)
-python github_inviter.py --org <组织名> --status
+--cols "name,email,username"      # 第1列姓名、第2列邮箱、第3列用户名
+--cols "username,email"           # 第1列用户名、第2列邮箱
+--cols "-,email,username"         # 跳过第1列
+```
 
-# 1. 看计划(dry-run, 不发东西)
+**表里没有表头**（第一行就是数据）时，脚本默认按「第 1 列用户名、第 2 列邮箱」处理，
+但更稳的是显式说明：
+
+```bash
+python github_inviter.py --org <组织名> 名单.csv --no-header --cols "name,email,username"
+```
+
+### 方式 2：一份纯用户名名单（.txt，每行一个）
+
+```
+zhangsan
+lisi-2026
+@wangwu
+zhaoliu@example.com
+```
+
+示例文件：[`名单示例.txt`](docs/examples/名单示例.txt)
+
+- 每行一个用户名**或**邮箱；空行和 `#` 开头的行忽略
+- `@前缀`、`https://github.com/xxx` 链接都认
+- 从表格里**整行粘过来的** `用户名,邮箱,备注` 也能用（只取第一个字段）
+
+### 方式 3：直接写在命令里（一两个人时最快）
+
+```bash
+python github_inviter.py --org <组织名> alice bob@example.com
+python github_inviter.py --org <组织名> @alice https://github.com/bob
+```
+
+---
+
+## 三、命令怎么写
+
+以表格为例，三步走：
+
+```bash
+# 1. 先看计划（不发任何东西）
 python github_inviter.py --org <组织名> "<收集表.xlsx>"
 
-# 2. 试跑 3 个
+# 2. 试跑 3 个（这一步会真发邀请）
 python github_inviter.py --org <组织名> "<收集表.xlsx>" --execute --limit 3
 
-# 3. 确认没问题, 全量执行
+# 3. 确认没问题，全量
 python github_inviter.py --org <组织名> "<收集表.xlsx>" --execute
 ```
 
-### 输入可以怎么写
+**同时把人加进 Team**，加一个 `--team`：
 
 ```bash
-# 直接写用户名/邮箱(自动分辨; @前缀和 github.com/xxx 链接都认)
-python github_inviter.py --org my-org alice bob@example.com
-python github_inviter.py --org my-org @alice https://github.com/bob
-
-# 一张表: .xlsx / .csv / .tsv
-python github_inviter.py --org my-org "收集表.xlsx"
-
-# 每行一个用户名的名单(.txt), 或从标准输入喂
-python github_inviter.py --org my-org 名单.txt
-cat 名单.csv | python github_inviter.py --org my-org -
+python github_inviter.py --org <组织名> "<收集表.xlsx>" --team "<Team名>" --execute
 ```
 
-xlsx/csv 默认**先按表头认列**: `GitHub用户名` / `用户名` / `账号` / `username`、
-`邮箱` / `email` / `mail`、`姓名` / `name` / `昵称` 这些都认。
-认不出来就按约定位置: **第 1 列用户名, 第 2 列邮箱**。
-
-列顺序不一样时用 `--cols` 说明(**位置从 1 开始数**, 不想用的列写 `-`):
+**先看一眼组织现状**（只读，不改任何东西）：
 
 ```bash
---cols "username,email,name"    # 第1列用户名、第2列邮箱、第3列姓名
---cols "email,username"         # 第1列邮箱、第2列用户名
---cols "-,email,username"       # 跳过第1列
---cols "name,email,username"    # 收集表常见顺序
+python github_inviter.py --org <组织名> --status
 ```
-
-### 把人加进 Team
-
-加 `--team`, 就会在发组织邀请的同时, 把**已经是组织成员**的人加进这个 team:
-
-```bash
-# 看计划
-python github_inviter.py --org <my-org> "<收集表.xlsx>" --team "<my-team>"
-
-# 执行
-python github_inviter.py --org <my-org> "<收集表.xlsx>" --team "<my-team>" --execute
-```
-
-**没接受组织邀请的人, 这次不会去动 team** —— 因为人还不是组织成员时加不进去。
-他们会被列进「待重跑名单」, 等对方点了接受, **再跑一次同一条命令**就自动补进 team。
-
-已在 team 里的人一律跳过, **不会改动他们的 team 角色**(否则 maintainer 会被降级成 member)。
 
 ### 常用选项
 
 | 选项 | 说明 |
 |---|---|
+| `--org` | **必填**，组织名（URL 里那个 slug） |
 | `--execute` | 真正发送。**不加就是 dry-run** |
-| `--limit N` | 本次最多处理 N 条, 首次建议 3~5 |
-| `--delay S` | 每条之间的间隔秒数, 默认 2.0。别调太小, 会触发限流 |
-| `--status` | 只读: 看组织成员数、待处理邀请、失败邀请(含原因) |
-| `--team "名字"` | 同时把人加进这个 team |
-| `--cols` / `--email-col` / `--username-col` | 指定列 |
-| `--sheet 名字` | xlsx 指定工作表, 默认第一个 |
-| `--resolve-emails` | 先用搜索接口把邮箱反查成用户名, 命中就更可靠(慢一些) |
-| `--prefer-email` | 强制只按邮箱邀请 |
-| `--no-resume` | 忽略历史结果重跑全部(**会重复发送**) |
-| `--no-preflight` | 跳过预检, 只看名单解析结果(不用 token) |
+| `--limit N` | 本次只处理**表里第 1~N 行**，首次建议 3~5 |
+| `--team "<名字>"` | 同时把人加进这个 Team |
+| `--status` | 只读：看组织成员数、待处理邀请、失败邀请及原因 |
+| `--cols` | 表头认不出来时，按位置指定列 |
+| `--sheet <名字>` | xlsx 指定工作表，默认第一个 |
+| `--delay S` | 每条间隔秒数，默认 2.0。**别调小**，会触发限流 |
+| `--resolve-emails` | 先用搜索把邮箱反查成用户名，命中更可靠（慢一些） |
+| `--no-resume` | 忽略历史结果重跑全部（**会重复发送**） |
 
-## 跑完看什么
+### 跑到一半断了怎么办
 
-控制台会打印一张**按姓名**的逐行表 + 汇总 + 失败明细(含处理措施):
+直接再跑一次同样的命令就行。脚本会自动跳过**上次已经成功的人**，不会重复打扰。
+想强制全部重来加 `--no-resume`（**会重复发邮件**，慎用）。
+
+---
+
+## 四、跑完会看到什么
+
+先是逐行结果（**按姓名**列出来谁成功、谁失败）：
 
 ```
-== 逐行结果 (3 人) ==
-姓名  邮箱                  用户名    组织邀请        Team              说明
-----  --------------------  --------  --------------  ----------------  ------------------
-张三  zhangsan@example.com  zhangsan  组织邀请已发出  已加入 team       已按用户名邀请
-李四  lisi@example.com      —         组织邀请已发出  缺用户名          已按邮箱邀请
-王五  wangwu@example.com    wangwu    已是组织成员    待对方接受组织邀请  在组织成员列表里
+== 逐行结果 (4 人) ==
+姓名  邮箱                  用户名      组织邀请        Team              说明
+----  --------------------  ----------  --------------  ----------------  ------------------
+张三  zhangsan@example.com  zhangsan    组织邀请已发出  已加入 team       已按用户名邀请
+李四  lisi@example.com      lisi-2026   组织邀请已发出  待对方接受组织邀请  已按用户名邀请
+王五  wangwu@example.com    —           组织邀请已发出  缺用户名          已按邮箱邀请
+赵六  —                     zhaoliu     已是组织成员    待对方接受组织邀请  在组织成员列表里
 ```
 
-同时在 `output/` 下留档, 每跑一次一组:
+后面还有汇总、**失败明细（带处理措施）**、以及「待重跑名单」。
+同时在 `output/` 下留档：
 
 | 文件 | 内容 |
 |---|---|
-| `results-<时间戳>.csv` | 姓名/邮箱/用户名/状态/失败原因/处理措施, Excel 直接打开 |
-| `results-<时间戳>.jsonl` | 机器可读, **续跑靠它**: 重跑自动跳过上次已成功的人 |
+| `results-<时间戳>.csv` | 逐行状态、失败原因、处理措施，Excel 直接打开 |
+| `results-<时间戳>.jsonl` | 机器可读，**续跑就是靠它**记住谁已成功 |
 | `plan-<时间戳>.csv` | dry-run 时生成的计划 |
 
-## 三条要知道的限制
+---
 
-1. **按邮箱邀请**: 只有该邮箱是对方 GitHub 账号上**已验证**的邮箱, 他才点得动邀请链接。
-   接口这时候照样返回成功, 所以只有邮箱的人事后要用 `--status` 对一遍。
-   **能拿到用户名就优先用用户名邀请**, 这条路可靠得多(脚本默认就这么做)。
-2. **组织邀请 7 天过期**, 到期前催一下没接受的人。
-3. **Team 成员接口只收用户名, 不认邮箱**, 而且对方得先是组织成员。
+## 五、遇到问题怎么解决
+
+### 发不出去 / 连不上
+
+| 现象 | 原因 | 怎么办 |
+|---|---|---|
+| 满屏重试、`SSL: UNEXPECTED_EOF_WHILE_READING` | 系统代理 | **关掉系统代理** |
+| `404` | 组织名写错，或 token 不是该组织 owner | 核对组织 slug 和 token |
+| `403 权限不足` | 权限没给够，或细粒度 token 没被组织批准 | 补 Members 写权限 / 去组织批准 |
+| `找不到 team: xxx` | Team 名字写错 | 报错里会列出全部 Team |
+| `预检失败` | token 无效或没权限 | 先用 `--status` 单独测一下 |
+
+### 人的状态不对
+
+| 现象 | 原因 | 怎么办 |
+|---|---|---|
+| `已是组织成员` | 人本来就在组织里 | **不用管**，接口也不会给他发邮件 |
+| `已有待处理邀请` | 之前发过还没接受 | 不用重发，等对方接受 |
+| 同上，但对方说没收到 | 邀请邮件进了垃圾邮件 | 让对方搜一下 GitHub 的邮件；7 天内有效 |
+| **`用户名不存在`** | 表里那个用户名在 GitHub 上**查不到** | 找本人核对拼写。**先试相邻字母打反**：`user_name` 被打成 `u5er_na3e` 这种情况 |
+| 一批人 `缺用户名，加不了 team` | 表里只有邮箱 —— Team 接口不认邮箱 | 补一列 GitHub 用户名再重跑 |
+| 一批人 `待对方接受组织邀请` | 人还不是组织成员，现在加不进 Team | 等对方接受，**再跑一次同样的命令**就会自动补进 Team |
+| 对方说已经进组织了，还显示待接受 | 表里用户名可能填错了 | 让对方把自己的 GitHub 用户名发来核对 |
+| `跳过(上次已成功)` | 续跑记忆生效了 | 不用管。想重发加 `--no-resume` |
+| `跳过(--limit 截断)` | 被 `--limit` 拦住了，**不是失败** | 不带 `--limit` 再跑一次 |
+
+### 对方点不动邀请链接
+
+**这是邮箱邀请的硬限制**：只有该邮箱是对方 GitHub 账号上**已验证**的邮箱，他才点得动。
+没验证时接口照样返回成功，所以事后要用 `--status` 对一遍：
+
+```bash
+python github_inviter.py --org <组织名> --status
+```
+
+里面列出的「失败邀请」就是对方没接成的。处理办法二选一：
+
+1. 让对方把该邮箱加到自己的 GitHub 账号并**验证**；
+2. **改用 GitHub 用户名邀请**（表里补上用户名列）——这条路可靠得多。
+
+看到 `Invitation expired. User did not accept this invite for 7 days` 表示
+**组织邀请 7 天过期了**，需要重新发一次。
+
+### 表解析得不对
+
+先跑一次 dry-run，看输出里的「列映射」那一行，确认 `邮箱=<...>  用户名=<...>  姓名=<...>`
+指对了列。**指错了就停下来用 `--cols` 改，不要在列映射不对的时候加 `--execute`。**
+
+| 现象 | 怎么办 |
+|---|---|
+| 列映射指错了列 | 用 `--cols "name,email,username"` 按位置指定 |
+| `没认出哪一列是邮箱、哪一列是用户名` | 同上用 `--cols`；或用 `--email-col` / `--username-col` 给列名 |
+| 解析出的行数比想象中少 | 完全空白的行会被忽略；重复的人只算一次 |
+| 中文乱码 | 脚本会自动试 UTF-8 / GB18030，一般不会；仍乱码就把表另存为 UTF-8 |
+| 只想要其中几个人 | 先用 `--limit`，或者另存一份只含这几个人的表 |
+
+---
+
+## 六、三条要知道的限制
+
+1. **按邮箱邀请**要求该邮箱是对方 GitHub 账号上**已验证**的邮箱，否则他点不动。
+   **能拿到用户名就优先用用户名邀请**（脚本默认就这么做），这条路可靠得多。
+2. **组织邀请 7 天过期**，到期前催一下没接受的人。
+3. **Team 接口只收用户名，不认邮箱**，而且对方得先是组织成员。
    所以收集表最好带一列 GitHub 用户名。
 
-## 常见问题
+---
 
-| 现象 | 原因 | 解决 |
-|---|---|---|
-| 满屏重试 / SSL 报错 | 系统代理 | **关掉系统代理** |
-| `404` | 组织名写错, 或 token 不是该组织 owner | 核对组织 slug 和 token |
-| `403 权限不足` | 权限没给够, 或细粒度 token 没被组织批准 | 补 Members 写权限 / 去组织批准 |
-| `找不到 team: xxx` | 名字写错 | 报错里会列出全部 team |
-| `已经是组织成员` | 人本来就在 | 不用管, 接口也不会给他发邮件 |
-| 失败清单里 `Invitation expired` | 7 天没接受 | 重新发一次 |
-| 一批人「缺用户名, 加不了 team」 | 表里只有邮箱 | 补一列 GitHub 用户名再重跑 |
-
-设计取舍、接口细节和踩坑记录见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+<sub>设计取舍、接口细节、踩坑记录见 [ARCHITECTURE.md](ARCHITECTURE.md)（面向维护者）。</sub>

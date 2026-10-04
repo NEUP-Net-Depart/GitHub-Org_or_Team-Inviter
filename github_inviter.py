@@ -632,7 +632,7 @@ def resolve_input(args: argparse.Namespace) -> InputSource:
 def _rows_to_records(rows: Sequence[Sequence[str]]) -> tuple[list[Record], int]:
     """单列清单: 每行一个用户名/邮箱, 逐行按内容判断。
 
-    这样 `users.example.txt` 那种「每行一个用户名」的名单能直接用,
+    这样 `docs/examples/名单示例.txt` 那种「每行一个用户名」的名单能直接用,
     每行只取第一个逗号/制表符/分号分隔的字段, 所以整行粘过来的
     `用户名,邮箱,备注` 也认。
 

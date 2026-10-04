@@ -241,25 +241,31 @@ csv 侧: 自动试 `utf-8-sig` → `utf-8` → `gb18030` → `cp936` → `latin-
 - 代码里不硬编码 token, 运行时只打印 token 的**来源**(如「配置文件 token.txt」), 不打印内容。
 - 脚本输出、README、ARCHITECTURE、示例文件里**没有真实姓名/邮箱/用户名**。
 - `.gitignore` 挡住 `token.txt`、`.env`、`output/`, 以及 `*.xlsx` / `*.csv` / `*.tsv`
-  (收集表是最大的泄露源), 只放行 `emails.example.csv` 和 `users.example.txt`。
+  (收集表是最大的泄露源), 只放行 `docs/**` 下的示例模板。
 - `output/` 里的结果文件含真实邮箱, 不要提交。
 
 ---
 
 ## 十、离线自测
 
-`_test/` 下是开发期的离线测试台, 覆盖旧项目 16 条踩坑。三套测试都**不碰网络、不发任何邀请**,
+`_test/` 下是开发期的离线测试台, 覆盖旧项目 16 条踩坑。这些测试都**不碰网络、不发任何邀请**,
 不含任何真实数据, 可以随时重跑:
 
 ```bash
 python _test/make_fixtures.py        # 造最小 xlsx(两张表/内联字符串/跳格/空行) + BOM csv
 python _test/run_offline_tests.py    # 40 项: 表头识别/--cols/csv 变体/xlsx/命令行/stdin/--limit/报错路径
 python _test/run_output_tests.py     # 11 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类
-python _test/run_path_tests.py       # 17 项: 用假客户端驱动真实的 process_org_invites / process_team
+python _test/run_path_tests.py       # 22 项: 用假客户端驱动真实的 process_org_invites / process_team
+python _test/run_example_tests.py     #  6 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
+python _test/check_token_formats.py   #  验证 token.txt 的各种写法(裸 token / KEY=VALUE / 注释 / 引号)
+python _test/scan_pii.py              #  扫被跟踪文件里的真实个人信息(词表在 .pii-terms, 不入库)
 ```
 
 `run_offline_tests.py` 最后会拿真实收集表 `uu们的GitHub用户名和邮箱开盒.xlsx` 只做**解析**
 (不联网), 打印出它认到的列映射供人工确认 —— 这条会在该文件不存在时自动跳过。
+
+`run_example_tests.py` 是 README 的保险: README 指向 `docs/examples/` 里的文件,
+这一套保证那些文件**真的能用**, 免得文档写了一个跑不通的格式。
 
 不想要这些测试文件, 整个删掉 `_test/` 即可, 不影响 `github_inviter.py`。
 
