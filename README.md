@@ -78,27 +78,37 @@
 位置从 **1** 开始数，不用的列写 `-`：
 
 ```bash
---cols "name,email,username"      # 第1列姓名、第2列邮箱、第3列用户名
---cols "username,email"           # 第1列用户名、第2列邮箱
---cols "-,email,username"         # 跳过第1列
+--cols "name,email,username"           # 第1列姓名、第2列邮箱、第3列用户名
+--cols "username,email"                # 第1列用户名、第2列邮箱
+--cols "-,-,-,username,email,name"     # 跳过前三列
 ```
 
-> ⚠️ **`--cols` 只管数据列的序号，不会自动跳过表头行。** 表里**有表头**时还要加
-> `--skip-rows 1`，否则那一行会被当成数据：
+> [!note]  
+> **`--cols` 只负责「哪一列是什么」，表头行照旧会被自动跳过。** 表头认得出来时，
+> 加了 `--cols` 也不用再写别的：
 >
 > ```bash
-> # 表是: 提交时间 | GitHub用户名 | 邮箱 | 姓名 | 备注   （表头认不出来）
+> # 表头是 提交时间 | GitHub用户名 | 邮箱 | 姓名 | 备注  —— 认得出来, 第1行自动跳过
 > python github_inviter.py --org <组织名> "<收集表.xlsx>" \
->   --cols "-,username,email,name,-" --skip-rows 1
+>   --cols "-,username,email,name"
 > ```
+
+**只有当表头也认不出来时**（比如列名是「QQ」「微信」），脚本没法判断第 1 行是不是表头，
+它会提示你，用 `--skip-rows 1` 明确跳过：
+
+```bash
+# 表是: 日期 | QQ | 微信 | 怎么称呼 | 备注  —— 一个列名都认不出
+python github_inviter.py --org <组织名> "<收集表.xlsx>" \
+  --cols "-,username,email,name,-" --skip-rows 1
+```
 
 关于 `--cols` 的几点：
 
-- 项数**不必等于列数**，写到有用的最后一列就行。上面那个例子写成
-  `--cols "-,username,email,name"` 效果完全一样
+- 项数**不必等于列数**，写到有用的最后一列就行。例如第 5 列不用时，
+  `--cols "-,username,email,name"` 和 `--cols "-,username,email,name,-"` 效果完全一样
 - 但如果**末尾要跳过的列后面还有你要用的列**，就得把 `-` 写齐，例如
   `--cols "-,username,-,email"`（第 1、3 列跳过，第 2 列用户名、第 4 列邮箱）
-- 表里**没有表头**（第一行就是数据）时**不要**加 `--skip-rows`
+- 表里**没有表头**时不要加 `--skip-rows`（或者用 `--no-header` 明确声明）
 
 **表里没有表头**（第一行就是数据）时，脚本默认按「第 1 列用户名、第 2 列邮箱」处理，
 但更稳的是显式说明：

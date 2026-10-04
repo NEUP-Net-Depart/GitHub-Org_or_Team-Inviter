@@ -609,29 +609,31 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
     width = max((len(row) for row in rows), default=0)
     cols = _blank_cols()
     header: list[str] = []
-    first_data = 0
+    # --skip-rows 显式给过就完全以它为准(包括显式给 0, 表示"别认表头")
+    skip_given = getattr(args, "skip_rows", 0) > 0
 
+    # 表头识别只在需要时做一次。注意它是在 `rows`(已砍掉 skip 行)上做的, 所以返回的
+    # header_index 是相对 rows 的; 换算成"从表格开头数第几行"要加回 skip。
+    detected_index, detected_cols = (-1, _blank_cols())
+    if not args.no_header and not skip_given:
+        detected_index, detected_cols = locate_header(rows)
+
+    # ---- 第 1 步: 定列(哪一列是什么) ----
+    # 与「数据从第几行开始」是两件独立的事。早期实现搅在一起: 给了 --cols 就连表头识别
+    # 一起关掉, 于是「有表头 + 列名认不出」的表没有干净写法。
     if args.cols:
         cols = dict(parse_cols_spec(args.cols, width))
         if cols.get("email") is None and cols.get("username") is None:
             die(f'--cols "{args.cols}" 里没有一列是 email 或 username, 没东西可发。\n'
                 f'每项只能填 username / email / name, 不想用的列写 "-" 占位。\n'
                 f'例如: --cols "name,email,username"')
-        # --cols 是按位置指定数据列, 它本身不判断哪一行是表头。表格开头若还有一行
-        # 表头, 那一行会被当成数据。这里不做猜测(猜错代价更大), 只把规则说清楚。
-        if not skip and not args.no_header:
-            log("  ! 用了 --cols: 表头行不会被自动跳过。第 1 行是表头就加 --skip-rows 1; "
-                "第 1 行就是数据则忽略本行。")
     elif args.no_header:
         cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
+    elif detected_index >= 0:
+        header = [str(c) for c in rows[detected_index]]
+        cols = dict(detected_cols)
     else:
-        header_index, detected = locate_header(rows)
-        if header_index >= 0:
-            header = [str(c) for c in rows[header_index]]
-            cols = dict(detected)
-            first_data = header_index + 1
-        else:
-            cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
+        cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
 
     if args.email_col:
         cols["email"] = _index_of(header or [str(c) for c in rows[0]], args.email_col, width)
@@ -644,10 +646,25 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
             '请用 --cols "name,email,username" 按位置指定 '
             "(位置从 1 开始, 不想用的列写 '-'), 或用 --email-col / --username-col 指定列名。")
 
-    data_rows = rows[first_data:]
+    # ---- 第 2 步: 定数据起点 ----
+    # 优先级: --skip-rows(用户明确说了) > 自动认出的表头 > 第 1 行就是数据
+    if skip_given:
+        data_offset = skip
+    elif detected_index >= 0:
+        data_offset = skip + detected_index + 1
+    else:
+        data_offset = skip
+        # 用了 --cols 又认不出表头: 第 1 行是表头还是数据, 脚本猜不了, 把规则说清楚。
+        # 不猜是有意的 —— 猜错会把表头当成人发出去。
+        if args.cols:
+            log("  ! 表头没认出来: 第 1 行会被当成数据。它是表头就加 --skip-rows 1, "
+                "它本来就是数据则忽略本行。")
+
+    # rows 已经砍掉 skip 行了, 所以这里要减掉 skip, 不能重复跳
+    data_rows = rows[data_offset - skip:]
     records = build_records(data_rows, cols)
     for record in records:
-        record.row += first_data   # 换算回表里的真实行号
+        record.row += data_offset   # 换算回表格里的真实行号
 
     # 保险: 表头没认出来时会退回「按位置」兜底(第1列用户名、第2列邮箱)。如果实际表格
     # 的列不是这个顺序, 邮箱列里就会装满"不是邮箱"的值 —— 这时宁可停下问清楚,

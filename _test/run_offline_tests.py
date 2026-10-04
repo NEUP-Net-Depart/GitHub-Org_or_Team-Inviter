@@ -135,10 +135,20 @@ def main() -> int:
           ["--org", "o", "--no-preflight", str(weird),
            "--cols", "-,username,email,name,-", "--skip-rows", "1"],
           must_have=["待处理 2 条"], expect_code=0)
-    check("--cols 不配 --skip-rows 时提醒表头行不会被跳过",
+    check("--cols 且表头认不出 -> 提示第1行会被当数据",
           ["--org", "o", "--no-preflight", str(weird),
            "--cols", "-,username,email,name,-"],
-          must_have=["表头行不会被自动跳过", "--skip-rows 1"], expect_code=0)
+          must_have=["表头没认出来", "--skip-rows 1"], expect_code=0)
+    # --cols 只管列位置, 表头行照样自动跳过 —— 这是被用户问出来后修正的行为
+    check("--cols 且表头认得出来 -> 表头自动跳过, 不打扰用户",
+          ["--org", "o", "--no-preflight", std, "--cols", "name,email,username"],
+          must_have=["待处理 9 条"],
+          must_not=["表头没认出来", "第 1 行"], expect_code=0)
+    check("--cols 对正常表头也给出正确列映射",
+          # 故意把 email 和 name 换位: 中间那行(邮箱和用户名都空)会因此被排除, 所以是 10 条不是 9 条
+          ["--org", "o", "--no-preflight", std, "--cols", "email,name,username"],
+          must_have=["邮箱=<第 1 列>", "用户名=<第 3 列>", "姓名=<第 2 列>",
+                     "待处理 10 条"], expect_code=0)
     check("认不出表头且没给 --cols 时要停下问清楚(不静默按错的列发)",
           ["--org", "o", "--no-preflight", str(weird)],
           must_have=["兜底也对不上", "--cols", "--skip-rows 1"], expect_code=2)
