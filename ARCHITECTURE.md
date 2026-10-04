@@ -294,6 +294,26 @@ csv 侧: 自动试 `utf-8-sig` → `utf-8` → `gb18030` → `cp936` → `latin-
 - `.gitignore` 挡住 `token.txt`、`.env`、`output/`, 以及 `*.xlsx` / `*.csv` / `*.tsv`  (收集表是最大的泄露源), 只放行 `docs/**` 下的示例模板。
 - `output/` 里的结果文件含真实邮箱, 不要提交。
 
+### 推送前自检
+
+```bash
+python _test/scan_pii.py            # 工作区这一版有没有敏感信息
+python _test/scan_pii_history.py    # 整个历史有没有(删掉的文件也翻得出来)
+```
+
+两个都要跑, 因为它们看的**不是一个地方**: `scan_pii.py` 只查 `git ls-files`
+(现在这一版), `scan_pii_history.py` 把 `rev-list --objects --all` 里所有可达 blob
+倒出来查历史 —— **历史是跟着 push 一起走的**, 一个曾经提交过的真实姓名, 后来删掉了,
+`git log -p` 照样翻得出来。
+
+两个脚本都只报文件名/行号, **不回显命中的内容**, 免得扫描器自己成了新的泄露点。
+词表放在不入库的 `.pii-terms` 里(它本身就是敏感信息), 所以干净克隆里这两个脚本
+会以退出码 2 提示"没有词表", 属正常。
+
+`scan_pii_history.py` 除了词表还会精确比对本机 `token.txt` 里的 token 值 ——
+它是防"哪天不小心提交过一次"的。另外会把 `ghp_` / `github_pat_` 这类**长相**单独列一段
+"参考", 不算失败: 测试和文档里本来就写着占位符, 一定会命中, 不能当结论。
+
 ---
 
 ## 十、离线自测
@@ -302,13 +322,14 @@ csv 侧: 自动试 `utf-8-sig` → `utf-8` → `gb18030` → `cp936` → `latin-
 不含任何真实数据, 可以随时重跑:
 
 ```bash
-python _test/run_offline_tests.py    # 46 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
+python _test/run_offline_tests.py    # 45 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
 python _test/run_output_tests.py     # 11 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类
 python _test/run_path_tests.py       # 22 项: 用假客户端驱动真实的 process_org_invites / process_team
 python _test/run_example_tests.py     #  5 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
 python _test/run_prompt_tests.py      #  7 项: 交互提问(替换掉终端判断和 input, 模拟人的回答)
 python _test/check_token_formats.py   #  验证 token.txt 的各种写法(裸 token / KEY=VALUE / 注释 / 引号)
 python _test/scan_pii.py              #  扫被跟踪文件里的真实个人信息(词表在 .pii-terms, 不入库)
+python _test/scan_pii_history.py      #  扫整个 git 历史(含 token.txt 里的 token 值), 推送前跑
 ```
 
 ### 夹具为什么不在版本库里

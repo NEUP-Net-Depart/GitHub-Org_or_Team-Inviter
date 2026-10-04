@@ -1,0 +1,20 @@
+# 行尾统一成 LF: 进版本库的是 LF, 检出也是 LF。
+# 不加这条时, Windows 上 core.autocrlf=true 会让工作区变成 CRLF(每次提交都弹
+# "LF will be replaced by CRLF" 的警告), 不同的人检出结果还不一样, 无谓的整文件 diff。
+* text=auto eol=lf
+
+# 二进制: 明确声明, 免得被当文本"规范化"搞坏(xlsx 尤其重要, 它在版本库里)
+*.xlsx binary
+*.xls  binary
+*.xlsm binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.exe  binary
+
+# Windows 批处理必须 CRLF, 否则某些情况下会执行异常
+*.bat text eol=crlf
+*.cmd text eol=crlf

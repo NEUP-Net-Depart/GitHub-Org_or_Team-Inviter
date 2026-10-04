@@ -280,18 +280,9 @@ def main() -> int:
           ["--org", "o", "--status", std],
           must_have=["只读查询"], expect_code=2)
 
-    # --- 11. 真实的参考收集表(只解析, 不外泄内容) ---
-    real = ROOT / "reference" / "友友们的github账户开盒.xlsx"
-    if real.is_file():
-        code, output = run(["--org", "o", "--no-preflight", str(real)])
-        head = output.splitlines()[1:8]
-        print("\n[INFO] 参考表解析结果(前几行, 供人工确认):")
-        for line in head:
-            print(f"         {line}")
-        status = "PASS" if code == 0 and "解析到" in output else "FAIL"
-        (PASS if status == "PASS" else FAIL).append("参考收集表能解析")
-        print(f"[{status}] 参考收集表能解析 (退出码 {code})")
-
+    # 注: 这里曾经有一项「拿 reference/ 里的真实参考收集表解析一遍」。
+    # reference/ 已整体删除(项目转为稳定脚本, 旧数据不再需要), 该用例一并去掉 ——
+    # 它本来就只在作者机器上有真实表时才跑, 干净克隆里一直是跳过的。
     print(f"\n===== 结果: 通过 {len(PASS)} / 失败 {len(FAIL)} =====")
     for title in FAIL:
         print(f"  失败: {title}")

@@ -32,3 +32,4 @@
 | [`2026-10-04-merge-org-team-inviter.md`](logs/2026-10-04-merge-org-team-inviter.md) | 把两个旧脚本合并成单一 `github_inviter.py`; 离线测试抓到的 5 个真 bug; 状态值撞车; 实跑发现用户名与邮箱对不上 |
 | [`2026-10-04-pending-invite-misdiagnosis.md`](logs/2026-10-04-pending-invite-misdiagnosis.md) | 「待对方接受组织邀请」查不到头: 其实两处用户名拼写错了; 含我一次错误方向(自行加的活查)的复盘与被还原; 「网页搜得到 ≠ 用户名存在」 |
 | [`2026-10-04-input-narrowing-and-interactive-prompts.md`](logs/2026-10-04-input-narrowing-and-interactive-prompts.md) | 砍掉 `.txt`/管道输入; `--cols` 与表头行拆开; 表头认不出时改成问用户; 三个自己引入的 bug(含 Windows 上 `DEVNULL` 的 `isatty()` 陷阱) |
+| [`2026-10-04-pre-push-cleanup.md`](logs/2026-10-04-pre-push-cleanup.md) | 推送前的清理: 干净克隆才发现夹具从没入库(45 项挂 27 项); 补历史扫描器 `scan_pii_history.py` 与 `.gitattributes`; 删掉 `reference/` 与本地敏感数据 |
