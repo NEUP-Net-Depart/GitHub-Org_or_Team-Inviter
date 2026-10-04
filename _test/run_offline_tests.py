@@ -17,6 +17,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "github_inviter.py"
 FIX = ROOT / "_test"
 
+# 夹具(csv/xlsx)被 .gitignore 挡着, 不可能随克隆过来 —— 缺了要能现场造出来,
+# 否则一个干净克隆跑这套会大面积"找不到表格文件"。见 _test/make_fixtures.py。
+sys.path.insert(0, str(FIX))
+import make_fixtures  # noqa: E402  (必须在 sys.path 处理之后)
+
 PASS, FAIL = [], []
 
 
@@ -66,7 +71,24 @@ def check(title: str, args: list[str], must_have: list[str] = (),
             print(f"         {line}")
 
 
+def check_true(title: str, ok: bool, detail: str = "") -> None:
+    """给不跑子进程的断言用(比如「夹具登记齐了没」)。"""
+    status = "PASS" if ok else "FAIL"
+    (PASS if ok else FAIL).append(title)
+    print(f"[{status}] {title}")
+    if not ok and detail:
+        print(f"         {detail}")
+
+
 def main() -> int:
+    # 夹具不在版本库里, 干净克隆里 _test/*.csv 是不存在的: 先补齐再跑。
+    make_fixtures.ensure()
+    needs = {"standard.csv", "noheader.csv", "semicolon.csv",
+             "bom.csv", "fixture.xlsx", "broken.xlsx"}
+    unregistered = sorted(needs - set(make_fixtures.FIXTURES))
+    check_true("这套用到的夹具都在 make_fixtures 里登记过(不能只躺在本地磁盘上)",
+               not unregistered, f"没登记的: {unregistered}")
+
     std = str(FIX / "standard.csv")
     # 运行时造的测试表放临时目录, 跑完就没了 —— 免得 _test/ 里堆一堆生成物
     tmp_dir = Path(tempfile.mkdtemp(prefix="inviter-offline-"))

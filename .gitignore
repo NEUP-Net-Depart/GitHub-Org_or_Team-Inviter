@@ -10,6 +10,9 @@ output/
 *.xls
 *.csv
 *.tsv
+# 注意: _test/ 的测试夹具也落在这四条规则里, 这是**故意的**。
+# 夹具不进库, 由 _test/make_fixtures.py 现场生成(见 ARCHITECTURE 第十节),
+# 别为了让测试跑起来就放行 *.csv —— 那等于给收集表开了个口子。
 
 # 备份/临时副本同样是泄露源(例如 收集表.xlsx.bak 不匹配上面的 *.xlsx)
 *.bak

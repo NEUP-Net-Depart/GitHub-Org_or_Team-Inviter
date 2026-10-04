@@ -1,7 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""测试夹具生成器: 造一个最小 xlsx(两张工作表, 含共享字符串/内联字符串/跳格)
-和一个带 BOM 的 csv。只为验证 github_inviter.py 的读表能力, 不属于交付物。"""
+"""测试夹具生成器。
+
+为什么要有这个文件: `.gitignore` 把 `*.csv` / `*.xlsx` 全挡在版本库外面
+(收集表是最大的泄露源), 所以**测试夹具不能入库** —— 必须能现场造出来。
+否则一个干净的克隆跑 `_test/run_offline_tests.py` 会因为找不到夹具而大面积失败。
+
+所以规矩是: **每个夹具都在下面的 `FIXTURES` 里登记**, 别的测试脚本只管调用
+`ensure()`(缺什么补什么), 谁都不需要先手动跑这个文件。
+
+    python _test/make_fixtures.py            # 补齐缺失的夹具
+    python _test/make_fixtures.py --force    # 全部重造(改了内容想比对时用)
+
+不属于交付物。
+"""
+from __future__ import annotations
+
+import sys
 import zipfile
 from pathlib import Path
 
@@ -87,7 +102,12 @@ SHEET2 = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </worksheet>"""
 
 
-def build_xlsx(path: Path) -> None:
+# --------------------------------------------------------------------------
+# 夹具本体
+# --------------------------------------------------------------------------
+
+def build_fixture_xlsx(path: Path) -> None:
+    """最小 xlsx: 两张工作表, 混合共享字符串/内联字符串, 一个跳格, 一个空行。"""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", CONTENT_TYPES)
         zf.writestr("_rels/.rels", ROOT_RELS)
@@ -96,23 +116,99 @@ def build_xlsx(path: Path) -> None:
         zf.writestr("xl/sharedStrings.xml", SHARED)
         zf.writestr("xl/worksheets/sheet1.xml", SHEET1)
         zf.writestr("xl/worksheets/sheet2.xml", SHEET2)
-    print(f"wrote {path.name}")
 
 
 def build_bom_csv(path: Path) -> None:
+    """带 UTF-8 BOM + CRLF 的 csv —— BOM 会让第一列列名认不出来, 是个真坑。"""
     text = ("姓名,邮箱,GitHub用户名\r\n"
             "BOM甲,bom1@example.com,bom-one\r\n"
             "BOM乙,bom2@example.com,bom-two\r\n")
     path.write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
-    print(f"wrote {path.name}")
 
 
 def build_broken_xlsx(path: Path) -> None:
+    """扩展名是 xlsx 但内容不是 zip —— 用来验证报错路径。"""
     path.write_bytes(b"this is definitely not a zip file")
-    print(f"wrote {path.name}")
+
+
+def build_standard_csv(path: Path) -> None:
+    """主力夹具: 表头能认出来, 且每列都埋了边界情况。
+
+    依次覆盖: 大小写邮箱 / 从 github.com URL 里抠用户名 / 只给邮箱 /
+    只给用户名 / 完全重复行 / 邮箱列里塞了个非邮箱(要兜底当用户名) /
+    一格两个邮箱 / 格式可疑的用户名(要提醒但不拦) / 全空白行(不该占行号)。
+    """
+    text = (
+        "姓名,邮箱,GitHub 用户名,提交时间\n"
+        "张三,zhangsan@example.com,zhangsan,2025-01-05\n"
+        "李四,LiSi@Example.COM,,2025-01-05\n"
+        "王五,wangwu@example.com,https://github.com/wangwu,2025-01-06\n"
+        "赵六,,zhaoliu,2025-01-06\n"
+        "钱七,qianqi@example.com,,2025-01-07\n"
+        "张三重复,zhangsan@example.com,zhangsan,2025-01-08\n"
+        "孙八,not-an-email,sunba,2025-01-09\n"
+        '周九,"zhoujiu@example.com; zhoujiu2@example.com",zhoujiu,2025-01-10\n'
+        "吴十,wu.shi@example.com,wu_shi,2025-01-11\n"
+        ",,,\n"
+        "郑十一,zhengshiyi@example.com,ZHENG-SHI-YI,2025-01-12\n"
+        "钱七2,qianqi@example.com,,2025-01-13\n"
+    )
+    path.write_bytes(text.encode("utf-8"))
+
+
+def build_noheader_csv(path: Path) -> None:
+    """没有表头的 csv, 且列顺序是「用户名,邮箱,姓名」—— 必须靠 --no-header 或提问。"""
+    path.write_bytes(("login-1,person1@example.com,甲\n"
+                      "login-2,person2@example.com,乙\n").encode("utf-8"))
+
+
+def build_semicolon_csv(path: Path) -> None:
+    """分号分隔 + 中文表头 + 姓名列在中间 + 有缺列的行。"""
+    path.write_bytes(("邮箱;姓名;GitHub用户名\n"
+                      "someone@example.com;甲;someone\n"
+                      "other@example.com;乙;other-login\n"
+                      ";丙;only-login\n"
+                      "last@example.com;丁;\n").encode("utf-8"))
+
+
+# 夹具登记表: 名字 -> 生成函数。加了新夹具就往这里加一行, 别在别处硬编码文件名。
+FIXTURES: dict[str, object] = {
+    "standard.csv": build_standard_csv,
+    "noheader.csv": build_noheader_csv,
+    "semicolon.csv": build_semicolon_csv,
+    "bom.csv": build_bom_csv,
+    "fixture.xlsx": build_fixture_xlsx,
+    "broken.xlsx": build_broken_xlsx,
+}
+
+
+def ensure(force: bool = False, verbose: bool = True) -> list[str]:
+    """补齐缺失的夹具, 返回本次真正写出的文件名。
+
+    已存在的一律不动(允许手工改成别的样子做实验); `force=True` 才全部重造。
+    """
+    written: list[str] = []
+    for name, build in FIXTURES.items():
+        path = HERE / name
+        if path.exists() and not force:
+            continue
+        build(path)  # type: ignore[operator]
+        written.append(name)
+    if written and verbose:
+        print(f"[夹具] 生成 {len(written)} 个: {', '.join(written)}")
+    return written
+
+
+def main(argv: list[str]) -> int:
+    force = "--force" in argv
+    written = ensure(force=force, verbose=False)
+    if written:
+        for name in written:
+            print(f"wrote {HERE / name}")
+    else:
+        print(f"夹具齐全({len(FIXTURES)} 个), 未改动; 想重造加 --force")
+    return 0
 
 
 if __name__ == "__main__":
-    build_xlsx(HERE / "fixture.xlsx")
-    build_bom_csv(HERE / "bom.csv")
-    build_broken_xlsx(HERE / "broken.xlsx")
+    raise SystemExit(main(sys.argv[1:]))

@@ -302,8 +302,7 @@ csv 侧: 自动试 `utf-8-sig` → `utf-8` → `gb18030` → `cp936` → `latin-
 不含任何真实数据, 可以随时重跑:
 
 ```bash
-python _test/make_fixtures.py        # 造最小 xlsx(两张表/内联字符串/跳格/空行) + BOM csv
-python _test/run_offline_tests.py    # 45 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
+python _test/run_offline_tests.py    # 46 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
 python _test/run_output_tests.py     # 11 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类
 python _test/run_path_tests.py       # 22 项: 用假客户端驱动真实的 process_org_invites / process_team
 python _test/run_example_tests.py     #  5 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
@@ -311,6 +310,23 @@ python _test/run_prompt_tests.py      #  7 项: 交互提问(替换掉终端判�
 python _test/check_token_formats.py   #  验证 token.txt 的各种写法(裸 token / KEY=VALUE / 注释 / 引号)
 python _test/scan_pii.py              #  扫被跟踪文件里的真实个人信息(词表在 .pii-terms, 不入库)
 ```
+
+### 夹具为什么不在版本库里
+
+`.gitignore` 把 `*.csv` / `*.xlsx` 全挡住了(收集表是最大的泄露源), 所以**夹具不能入库**,
+只能由 `_test/make_fixtures.py` 现场生成。用夹具的套件开头会调一次
+`make_fixtures.ensure()`(缺什么补什么, 已存在的不动), **干净克隆直接跑就行, 不需要先手动准备**:
+
+```bash
+python _test/make_fixtures.py            # 一般不用跑, 套件自己会补; 想手动补也可以
+python _test/make_fixtures.py --force    # 全部重造(改了夹具内容想重新比对时用)
+```
+
+> 这条规矩是踩出来的: `standard.csv` / `noheader.csv` / `semicolon.csv` 曾经只是本地手写的文件,
+> 被 `*.csv` 挡住没入库, 于是**干净克隆里 45 项挂了 27 项**(全是「找不到表格文件」)。
+> 现在三个 csv 也由 `make_fixtures.py` 生成(与当年手写内容**逐字节一致**),
+> 并且 `run_offline_tests.py` 有一条断言盯着「这套用到的夹具都登记过」,
+> 以后新增夹具忘了登记会当场失败, 不会再悄悄退化成只在作者机器上能跑。
 
 `run_offline_tests.py` 最后会拿真实收集表 `uu们的GitHub用户名和邮箱开盒.xlsx` 只做**解析**
 (不联网), 打印出它认到的列映射供人工确认 —— 这条会在该文件不存在时自动跳过。
