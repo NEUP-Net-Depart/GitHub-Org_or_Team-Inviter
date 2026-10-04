@@ -592,6 +592,121 @@ def resolve_input(args: argparse.Namespace) -> InputSource:
     return source
 
 
+def _stdin_is_interactive() -> bool:
+    """有没有人在终端前面等着回答问题。"""
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _ask_line(prompt: str) -> str:
+    """问一句并等回答。Ctrl-C / Ctrl-D 就当成放弃, 别抛一堆栈。"""
+    try:
+        return input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        die("已取消。", 2)
+
+
+def parse_row_range(answer: str, total: int) -> tuple[int, int]:
+    """解析「哪几行是数据」的回答, 返回 (起始行号, 结束行号), 都是 1-based 且含两端。
+
+    接受: "2" / "2-10" / "2-" / "-10" / "2~10" / "2 10"
+    """
+    text = (answer or "").strip().replace("~", "-").replace("－", "-")
+    text = re.sub(r"[,\s]+", "-", text)
+    if not text.strip("-"):
+        die("没听明白: 回答是空的。请写行号, 例如 2 表示从第 2 行开始, 或 2-10 表示到第 10 行。")
+
+    # 前导 '-' 表示"从第 1 行开始", 所以先把它单独记下来再合并多余的连字符,
+    # 否则 "-5" 会被 strip 成 "5-" 而变成"第5行到结尾"(踩过这个)。
+    starts_at_first = text.startswith("-")
+    body = re.sub(r"-+", "-", text.strip("-")).strip("-")
+    if not body:
+        die(f"没听明白: {answer!r}。请写行号, 例如 2 或 2-10。")
+
+    parts = body.split("-")
+    try:
+        if len(parts) == 1:
+            start = 1 if starts_at_first else int(parts[0])
+            end = int(parts[0]) if starts_at_first else total
+        else:
+            start = int(parts[0]) if parts[0] else 1
+            end = int(parts[1]) if parts[1] else total
+    except ValueError:
+        die(f"没听明白: {answer!r}。请写行号, 例如 2 表示从第 2 行开始, 或 2-10 表示到第 10 行。")
+
+    start = max(1, min(start, total))
+    end = max(1, min(end, total))
+    if start > end:
+        die(f"行号反了: 起始 {start} 大于结束 {end}(这张表共 {total} 行)。")
+    return start, end
+
+
+def show_rows(rows: Sequence[Sequence[str]], count: int = 5, width: int = 60) -> None:
+    """把表格前几行带行号打印出来, 好让人指出数据从哪行开始。"""
+    log("")
+    log(f"  表格前 {min(count, len(rows))} 行(共 {len(rows)} 行):")
+    for index, row in enumerate(rows[:count], start=1):
+        cells = " | ".join(str(c) for c in row)
+        log(f"    第 {index} 行: {clip(cells, width)}")
+    log("")
+
+
+def ask_data_rows(rows: Sequence[Sequence[str]]) -> tuple[int, int]:
+    """认不出表头时, 问人「从第几行到第几行是数据」。
+
+    返回 (起始行号, 结束行号), 1-based 含两端。回答 0 表示整张表都是数据。
+    """
+    if not _stdin_is_interactive():
+        die("表头认不出来, 而这里没法向你提问(输入不是终端)。\n"
+            "两种办法:\n"
+            "  1) 在终端里直接运行这个命令, 脚本会问你数据从第几行开始;\n"
+            '  2) 用 --cols 按位置说明数据列, 例如 --cols "-,username,email,name,-"\n'
+            "     (位置从 1 开始, 不用的列写 '-')。")
+    show_rows(rows)
+    log("  我是从表头名字认列的, 这张表认不出来。请告诉我:")
+    log("    · 数据从第几行开始   直接写行号, 例如 2")
+    log("    · 到第几行结束       例如 2-10; 只写 2 表示一直到表尾")
+    log("    · 整张表都没有表头   写 0")
+    answer = _ask_line("  数据行范围(例如 2 或 2-10, 写 0 表示全是数据): ")
+    if answer.strip() in ("0", "无", "没有", "-"):
+        return 1, len(rows)
+    return parse_row_range(answer, len(rows))
+
+
+def ask_columns(rows: Sequence[Sequence[str]], width: int) -> dict[str, int]:
+    """认不出哪一列是什么时, 问人一句, 回答格式和 --cols 一样。
+
+    留空就按老约定兜底(第1列用户名、第2列邮箱)。
+    """
+    if not _stdin_is_interactive():
+        die("认不出哪一列是邮箱、哪一列是用户名, 而这里没法向你提问(输入不是终端)。\n"
+            "请在终端里直接运行, 或用 --cols 按位置说明, 例如:\n"
+            '  --cols "-,username,email,name,-"   (位置从 1 开始, 不用的列写 \'-\')')
+
+    log("")
+    log(f"  这一行数据长这样(共 {width} 列):")
+    for index, cell in enumerate(rows[0] if rows else [], start=1):
+        log(f"    第 {index} 列: {clip(str(cell), 40)}")
+    log("")
+    log("  我没认出哪一列是邮箱、哪一列是用户名。请按位置告诉我, 和 --cols 一个写法:")
+    log("    第1列姓名、第2列用户名、第3列邮箱  就写  name,username,email")
+    log("    不想用的列写 -                       就写  -,username,email,name")
+    answer = _ask_line("  列的顺序(直接回车 = 按老约定: 第1列用户名、第2列邮箱): ")
+    if not answer.strip():
+        fallback = _blank_cols()
+        fallback["username"] = 0
+        fallback["email"] = 1 if width >= 2 else None
+        return fallback
+    cols = dict(parse_cols_spec(answer, width))
+    if cols.get("email") is None and cols.get("username") is None:
+        die(f'你填的 "{answer}" 里没有一列是 email 或 username, 没东西可发。\n'
+            f'每项只能填 username / email / name, 不想用的列写 "-"。')
+    return cols
+
+
 def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
     all_rows = read_table(target, args.sheet)
     if not all_rows:
@@ -599,41 +714,41 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
     if not any(str(cell).strip() for row in all_rows for cell in row):
         die(f"{target}: 表格里没有任何内容。")
 
-    # 先用 --skip-rows 砍掉开头几行(比如认不出来的表头)。
-    # --cols 给的是「数据列的序号」, 所以它和表头行各管各的、互不干扰。
-    skip = max(0, int(getattr(args, "skip_rows", 0) or 0))
-    if skip >= len(all_rows):
-        die(f"--skip-rows {skip} 超过表里的行数(共 {len(all_rows)} 行), 没数据可处理了。")
-    rows = all_rows[skip:]
-
+    rows = all_rows
     width = max((len(row) for row in rows), default=0)
     cols = _blank_cols()
     header: list[str] = []
-    # --skip-rows 显式给过就完全以它为准(包括显式给 0, 表示"别认表头")
-    skip_given = getattr(args, "skip_rows", 0) > 0
+    # --skip-rows 显式给过就用它, 不再自动认表头、也不再提问
+    skip = max(0, int(getattr(args, "skip_rows", 0) or 0))
+    if skip >= len(rows):
+        die(f"--skip-rows {skip} 超过表里的行数(共 {len(rows)} 行), 没数据可处理了。")
+    skip_given = skip > 0
 
-    # 表头识别只在需要时做一次。注意它是在 `rows`(已砍掉 skip 行)上做的, 所以返回的
-    # header_index 是相对 rows 的; 换算成"从表格开头数第几行"要加回 skip。
-    detected_index, detected_cols = (-1, _blank_cols())
-    if not args.no_header and not skip_given:
+    # 表头识别: 在前几行里找最像表头的一行。--no-header 或 --skip-rows 给了就不认。
+    if args.no_header or skip_given:
+        detected_index, detected_cols = -1, _blank_cols()
+    else:
         detected_index, detected_cols = locate_header(rows)
 
     # ---- 第 1 步: 定列(哪一列是什么) ----
-    # 与「数据从第几行开始」是两件独立的事。早期实现搅在一起: 给了 --cols 就连表头识别
-    # 一起关掉, 于是「有表头 + 列名认不出」的表没有干净写法。
+    # 与「数据从第几行开始」是两件独立的事。
     if args.cols:
         cols = dict(parse_cols_spec(args.cols, width))
         if cols.get("email") is None and cols.get("username") is None:
             die(f'--cols "{args.cols}" 里没有一列是 email 或 username, 没东西可发。\n'
                 f'每项只能填 username / email / name, 不想用的列写 "-" 占位。\n'
                 f'例如: --cols "name,email,username"')
-    elif args.no_header:
+    elif args.no_header or skip_given:
+        # 用户明确说了没有表头 / 跳过表头, 就按老约定: 第1列用户名、第2列邮箱。
+        # 不提问 —— 参数已经回答了。
         cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
     elif detected_index >= 0:
         header = [str(c) for c in rows[detected_index]]
         cols = dict(detected_cols)
     else:
-        cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
+        # 表头认不出来, 也不该在这里按位置"悄悄兜底" —— 兜底就没人会去问用户了。
+        # 留空, 下面统一走提问(或非终端时报错)。
+        pass
 
     if args.email_col:
         cols["email"] = _index_of(header or [str(c) for c in rows[0]], args.email_col, width)
@@ -641,44 +756,35 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
         cols["username"] = _index_of(header or [str(c) for c in rows[0]], args.username_col, width)
 
     if cols.get("email") is None and cols.get("username") is None:
-        die("没认出哪一列是邮箱、哪一列是用户名。\n"
-            f"表头是: {' | '.join(str(c) for c in rows[0])}\n"
-            '请用 --cols "name,email,username" 按位置指定 '
-            "(位置从 1 开始, 不想用的列写 '-'), 或用 --email-col / --username-col 指定列名。")
+        # 表头名字认不出、也没给 --cols / --no-header / --email-col / --username-col。
+        # 以前这里是直接报错退出; 现在改成问一句 —— 人能回答就不必再翻文档找参数。
+        # (如果显式给了 --cols 却一列都没对上, 上面的 --cols 校验已经报过错, 走不到这。)
+        if detected_index >= 0:
+            die("没认出哪一列是邮箱、哪一列是用户名。\n"
+                f"表头是: {' | '.join(str(c) for c in rows[0])}\n"
+                '请用 --cols "name,email,username" 按位置指定 '
+                "(位置从 1 开始, 不想用的列写 '-'), 或用 --email-col / --username-col 指定列名。")
+        cols = ask_columns(rows, width)
 
-    # ---- 第 2 步: 定数据起点 ----
-    # 优先级: --skip-rows(用户明确说了) > 自动认出的表头 > 第 1 行就是数据
+    # ---- 第 2 步: 定数据行范围 ----
     if skip_given:
-        data_offset = skip
+        # 用户明确给了 --skip-rows, 以它为准, 不再提问
+        data_start, data_end = skip + 1, len(rows)
+    elif args.no_header:
+        # --no-header 就是"整张表都是数据"的意思, 不必再问
+        data_start, data_end = 1, len(rows)
     elif detected_index >= 0:
-        data_offset = skip + detected_index + 1
+        # 表头认得出: 表头下面就是数据(表头可能不在第 1 行, 上面有标题行也一并跳过)
+        data_start, data_end = detected_index + 2, len(rows)      # 1-based, 含两端
     else:
-        data_offset = skip
-        # 用了 --cols 又认不出表头: 第 1 行是表头还是数据, 脚本猜不了, 把规则说清楚。
-        # 不猜是有意的 —— 猜错会把表头当成人发出去。
-        if args.cols:
-            log("  ! 表头没认出来: 第 1 行会被当成数据。它是表头就加 --skip-rows 1, "
-                "它本来就是数据则忽略本行。")
+        # 认不出表头 —— 第 1 行是表头还是数据, 脚本猜不了, 问人。
+        # 猜错会把表头当成人发出去, 所以这里宁愿打断一下。
+        data_start, data_end = ask_data_rows(rows)
 
-    # rows 已经砍掉 skip 行了, 所以这里要减掉 skip, 不能重复跳
-    data_rows = rows[data_offset - skip:]
+    data_rows = rows[data_start - 1:data_end]
     records = build_records(data_rows, cols)
     for record in records:
-        record.row += data_offset   # 换算回表格里的真实行号
-
-    # 保险: 表头没认出来时会退回「按位置」兜底(第1列用户名、第2列邮箱)。如果实际表格
-    # 的列不是这个顺序, 邮箱列里就会装满"不是邮箱"的值 —— 这时宁可停下问清楚,
-    # 也不要静默按错误的列发出去。
-    if not args.cols and records:
-        mismatched = sum(1 for r in records
-                         if any("邮箱列里写的不是邮箱" in n for n in r.notes))
-        if mismatched * 2 > len(records):
-            die("表头没认出来, 按「第1列用户名、第2列邮箱」兜底也对不上 —— "
-                f"{len(records)} 行里有 {mismatched} 行的邮箱列看着不是邮箱。\n"
-                f"表头是: {' | '.join(str(c) for c in (header or rows[0]))}\n"
-                "请用 --cols 按位置说明数据列(位置从 1 开始, 不用的列写 '-'), 例如:\n"
-                '  --cols "-,username,email,name,-"\n'
-                "如果第 1 行是表头, 再加上 --skip-rows 1 把它跳过。")
+        record.row += data_start - 1   # 换算回表格里的真实行号
 
     return InputSource(
         records=records,
@@ -1362,10 +1468,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "  姓名 / 邮箱 / GitHub用户名\n"
             "示例文件见 docs/examples/\n"
             "\n"
-            "表头认不出来时用 --cols 按位置说明(位置从 1 开始):\n"
-            "  --cols \"name,email,username\" 第1列姓名、第2列邮箱、第3列用户名\n"
-            "  --cols \"username,email\"      第1列用户名、第2列邮箱\n"
-            "  --cols \"-,email,username\"    跳过第1列\n"
+            "表头名字认不出来时, 脚本会列出前几行、问一句数据从第几行开始;\n"
+            "也可以用参数直接说清楚:\n"
+            "  --cols \"-,username,email,name\"  按位置指定列(位置从 1 开始, 不用的写 -)\n"
+            "  --skip-rows 1                    跳过第 1 行(比如认不出的表头)\n"
+            "  --no-header                      表里没有表头, 第一行就是数据\n"
         ),
     )
     parser.add_argument("targets", nargs="*", metavar="表格",
@@ -1384,9 +1491,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     table.add_argument("--username-col", default="", help="手动指定用户名列的列名或列号")
     table.add_argument("--sheet", default="", help="xlsx 的工作表名, 默认第一个")
     table.add_argument("--no-header", action="store_true",
-                       help="强制把第一行当数据(第1列用户名、第2列邮箱), 不做表头识别")
+                       help="表里没有表头(第一行就是数据): 不做表头识别, 按第1列用户名、第2列邮箱")
     table.add_argument("--skip-rows", type=int, default=0, metavar="N",
-                       help="跳过表格开头的 N 行再解析(配 --cols 用: 表头认不出时跳过表头行)")
+                       help="跳过表格开头的 N 行再解析(表头认不出时用 --skip-rows 1 跳掉它)")
 
     run = parser.add_argument_group("执行")
     run.add_argument("--execute", action="store_true",

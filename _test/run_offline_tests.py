@@ -21,14 +21,23 @@ PASS, FAIL = [], []
 
 
 def run(args: list[str], stdin_text: str | None = None) -> tuple[int, str]:
+    """跑一次脚本, 返回 (退出码, 输出)。
+
+    **必须显式切断 stdin**, 否则子进程会继承本终端的伪终端, sys.stdin.isatty() 为真,
+    脚本就会真的停下来等人回答(套件会挂住), 也永远测不到「非交互时报错」那条路。
+
+    注意不能用 subprocess.DEVNULL: Windows 上 NUL 是字符设备, isatty() 会返回 True,
+    等于没切断。要用 PIPE(给空输入), 这时 isatty() 才是 False —— 这条是实测出来的。
+    """
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), *args],
-        input=stdin_text,
+        input=stdin_text if stdin_text is not None else "",
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         cwd=str(ROOT),
+        timeout=60,
     )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
@@ -118,43 +127,46 @@ def main() -> int:
           ["--org", "o", "--no-preflight", std, "--cols", "-,-,-"],
           must_have=["没有一列是 email 或 username"], expect_code=2)
 
-    # --- 3.5 --skip-rows: 表头认不出来时跳过表头行 ---
+    # --- 3.5 表头认不出来时: 给了参数就照参数办, 没给就提问 ---
     # 场景: 表头写成「日期,QQ,微信,怎么称呼,备注」—— 一个列名都认不出
     weird = tmp_dir / "weird_header.csv"
     weird.write_text("日期,QQ,微信,怎么称呼,备注\n"
                      "2026-03-01,zhangsan,zhangsan@example.com,张三,组长\n"
                      "2026-03-01,lisi-2026,lisi@example.com,李四,\n",
                      encoding="utf-8")
-    check("--cols 配 --skip-rows 1 跳过认不出的表头",
+    check("--cols + --skip-rows 1 处理认不出的表头",
           ["--org", "o", "--no-preflight", str(weird),
            "--cols", "-,username,email,name,-", "--skip-rows", "1"],
           must_have=["邮箱=<第 3 列>", "用户名=<第 2 列>", "姓名=<第 4 列>",
                      "待处理 2 条", "张三", "李四"],
-          must_not=["怎么称呼", "格式可疑"], expect_code=0)
+          must_not=["怎么称呼", "格式可疑", "没法向你提问"], expect_code=0)
     check("--cols 尾部写多余 '-' 也接受",
           ["--org", "o", "--no-preflight", str(weird),
            "--cols", "-,username,email,name,-", "--skip-rows", "1"],
           must_have=["待处理 2 条"], expect_code=0)
-    check("--cols 且表头认不出 -> 提示第1行会被当数据",
-          ["--org", "o", "--no-preflight", str(weird),
-           "--cols", "-,username,email,name,-"],
-          must_have=["表头没认出来", "--skip-rows 1"], expect_code=0)
-    # --cols 只管列位置, 表头行照样自动跳过 —— 这是被用户问出来后修正的行为
+    check("--skip-rows 超过总行数要报错",
+          ["--org", "o", "--no-preflight", std, "--skip-rows", "999"],
+          must_have=["超过表里的行数"], expect_code=2)
+    # 没给 --skip-rows / --no-header: 问不出来(非终端)就明确报错, 不静默按错的列发
+    check("表头认不出 + --cols + 非终端 -> 报错并教两条出路",
+          ["--org", "o", "--no-preflight", str(weird), "--cols", "-,username,email,name,-"],
+          must_have=["没法向你提问", "第几行", "终端"], expect_code=2)
+    check("表头认不出 + 什么参数都没给 + 非终端 -> 报错",
+          ["--org", "o", "--no-preflight", str(weird)],
+          must_have=["没法向你提问", "--cols", "终端"], expect_code=2)
+    # 交互提问的完整行为由 _test/run_prompt_tests.py 覆盖(它替换掉终端判断和 input)
     check("--cols 且表头认得出来 -> 表头自动跳过, 不打扰用户",
           ["--org", "o", "--no-preflight", std, "--cols", "name,email,username"],
           must_have=["待处理 9 条"],
-          must_not=["表头没认出来", "第 1 行"], expect_code=0)
+          must_not=["没法向你提问"], expect_code=0)
     check("--cols 对正常表头也给出正确列映射",
           # 故意把 email 和 name 换位: 中间那行(邮箱和用户名都空)会因此被排除, 所以是 10 条不是 9 条
           ["--org", "o", "--no-preflight", std, "--cols", "email,name,username"],
           must_have=["邮箱=<第 1 列>", "用户名=<第 3 列>", "姓名=<第 2 列>",
                      "待处理 10 条"], expect_code=0)
-    check("认不出表头且没给 --cols 时要停下问清楚(不静默按错的列发)",
-          ["--org", "o", "--no-preflight", str(weird)],
-          must_have=["兜底也对不上", "--cols", "--skip-rows 1"], expect_code=2)
-    check("--skip-rows 超过总行数要报错",
-          ["--org", "o", "--no-preflight", std, "--skip-rows", "999"],
-          must_have=["超过表里的行数"], expect_code=2)
+    check("--cols 列映射无效时报错",
+          ["--org", "o", "--no-preflight", std, "--cols", "-,-,-"],
+          must_have=["没有一列是 email 或 username"], expect_code=2)
 
     # --- 4. csv 变体 ---
     check("分号分隔 + 中文表头",
@@ -164,11 +176,11 @@ def main() -> int:
           ["--org", "o", "--no-preflight", str(FIX / "bom.csv")],
           must_have=["待处理 2 条", "bom-one", "bom-two"], expect_code=0)
 
-    # --- 5. 无表头 ---
-    check("--no-header 按位置",
+    # --- 5. 没有表头的表(第一行就是数据) ---
+    check("--no-header 按位置兜底, 不提问",
           ["--org", "o", "--no-preflight", "--no-header", str(FIX / "noheader.csv")],
           must_have=["用户名=<第 1 列>", "邮箱=<第 2 列>", "login-1", "person1@example.com"],
-          expect_code=0)
+          must_not=["没法向你提问"], expect_code=0)
 
     # --- 6. xlsx ---
     check("xlsx 最小解析(共享字符串+内联+跳格+空行)",
