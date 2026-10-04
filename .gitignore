@@ -1,0 +1,26 @@
+# token 绝对不能进版本库
+token.txt
+.env
+
+# 运行结果里有真实姓名和邮箱
+output/
+
+# 收集表是最大的泄露源: 真实姓名 + 邮箱 + 用户名
+*.xlsx
+*.xls
+*.csv
+*.tsv
+
+# 备份/临时副本同样是泄露源(例如 收集表.xlsx.bak 不匹配上面的 *.xlsx)
+*.bak
+*.tmp
+*.orig
+*~
+
+# 只放行示例模板
+!emails.example.csv
+!users.example.txt
+
+# Python
+__pycache__/
+*.py[cod]
