@@ -145,46 +145,34 @@ def main() -> int:
           must_have=["不是有效的 xlsx"], expect_code=2)
 
     # --- 7. 命令行直接输入 ---
-    check("命令行: 用户名 + 邮箱混着写",
-          ["--org", "o", "--no-preflight", "alice", "bob@example.com"],
-          must_have=["alice", "bob@example.com", "待处理 2 条"], expect_code=0)
-    check("命令行: @前缀 和 github 链接",
-          ["--org", "o", "--no-preflight", "@carol", "https://github.com/dave"],
-          must_have=["carol", "dave"], expect_code=0)
-    check("命令行: 单个输入",
-          ["--org", "o", "--no-preflight", "alice"],
-          must_have=["待处理 1 条"], expect_code=0)
-    check("命令行: 看不懂的输入要报错",
-          ["--org", "o", "--no-preflight", "bad@@x"],
-          expect_code=2)
+    check("表格 + 命令行补一个用户名",
+          ["--org", "o", "--no-preflight", std, "extra-person"],
+          must_have=["extra-person", "命令行上的 1 个输入"], expect_code=0)
+    check("表格 + 命令行补一个邮箱",
+          ["--org", "o", "--no-preflight", std, "extra@example.com"],
+          must_have=["extra@example.com"], expect_code=0)
+    check("命令行补的输入不合法要报错",
+          ["--org", "o", "--no-preflight", std, "bad@@x"],
+          must_have=["不是合法的 GitHub 用户名"], expect_code=2)
     check("两个以上输入要报错",
-          ["--org", "o", "--no-preflight", "a", "b", "c"],
+          ["--org", "o", "--no-preflight", std, "extra1", "extra2"],
           must_have=["最多给两个输入"], expect_code=2)
     check("不给输入要报错",
           ["--org", "o", "--no-preflight"],
-          must_have=["必须给一个输入"], expect_code=2)
+          must_have=["必须给一个表格文件"], expect_code=2)
+    check("只给命令行用户名不给表格要报错",
+          ["--org", "o", "--no-preflight", "alice"],
+          must_have=["找不到表格文件"], expect_code=2)
 
-    # --- 8. 名单文件(.txt, 每行一个) ---
-    check("单列名单文件按每行一个处理",
-          ["--org", "o", "--no-preflight", str(FIX / "names.txt")],
-          must_have=["alice", "bob", "carol", "dave", "待处理 4 条"],
-          must_not=["ignored-name", "ignored@example.com"], expect_code=0)
-    check("单列名单: 一行多列只取第一个字段",
-          ["--org", "o", "--no-preflight", str(FIX / "names.txt")],
-          must_have=["待处理 4 条"])
-    check("单列名单也支持邮箱",
+    # --- 8. .txt 与标准输入已不再支持 ---
+    txt = FIX / "legacy_list.txt"
+    txt.write_text("alice\nbob\n", encoding="utf-8")
+    check(".txt 名单给出明确的迁移提示",
+          ["--org", "o", "--no-preflight", str(txt)],
+          must_have=[".txt 名单不再支持", "请改用表格"], expect_code=2)
+    check("'-' 不再是标准输入记号, 而是当成文件名",
           ["--org", "o", "--no-preflight", "-"],
-          must_have=["e1@example.com", "e2@example.com"], expect_code=0,
-          stdin_text="e1@example.com\ne2@example.com\n")
-
-    # --- 9. 标准输入 ---
-    check("从标准输入读 csv",
-          ["--org", "o", "--no-preflight", "-"],
-          must_have=["输入来源: 标准输入", "stdin-one", "stdin-two"], expect_code=0,
-          stdin_text="姓名,邮箱,GitHub用户名\n甲,s1@example.com,stdin-one\n乙,s2@example.com,stdin-two\n")
-    check("标准输入为空要报错",
-          ["--org", "o", "--no-preflight", "-"],
-          must_have=["标准输入里没有内容"], expect_code=2, stdin_text="")
+          must_have=["找不到表格文件"], expect_code=2)
 
     # --- 10. --limit 语义(必须是「表里的前 N 行」) ---
     check("--limit 2 只看表里第 1~2 行",
@@ -205,10 +193,10 @@ def main() -> int:
     # --- 11. 其它报错路径 ---
     check("文件不存在要报错",
           ["--org", "o", "--no-preflight", "不存在.xlsx"],
-          must_have=["找不到文件"], expect_code=2)
+          must_have=["找不到表格文件"], expect_code=2)
     check("不支持的扩展名要报错",
           ["--org", "o", "--no-preflight", str(FIX / "make_fixtures.py")],
-          must_have=["不支持的表格格式"], expect_code=2)
+          must_have=["不支持的文件格式"], expect_code=2)
     check("--limit 负数要报错",
           ["--org", "o", "--no-preflight", std, "--limit", "-1"],
           must_have=["不能是负数"], expect_code=2)

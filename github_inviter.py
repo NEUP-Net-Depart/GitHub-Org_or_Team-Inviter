@@ -7,8 +7,8 @@
   第 1 档(默认)      组织邀请  POST /orgs/{org}/invitations
   第 2 档(加 --team)  Team      PUT /orgs/{org}/teams/{slug}/memberships/{username}
 
-输入可以是命令行上直接写的用户名/邮箱, 也可以是一张表(.xlsx / .csv / .tsv),
-或者从标准输入喂进来的表。
+输入只有一种: 一张表(.xlsx / .csv)。表里至少要有「邮箱」或「GitHub用户名」一列 ——
+有用户名就用用户名邀请(更可靠), 没有才退回邮箱。
 
 默认是 dry-run: 不加 --execute 绝不发出任何邀请, 只解析 + 预检 + 打印计划。
 
@@ -56,9 +56,7 @@ EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,.]+(?:\.[^@\s,.]+)+$")
 LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 GITHUB_URL_RE = re.compile(r"^\s*(?:https?://)?(?:www\.)?github\.com/", re.I)
 
-TABLE_SUFFIXES = (".csv", ".tsv", ".txt", ".xlsx", ".xlsm")
-STDIN_TOKEN = "-"
-QUOTES = "\"'"
+TABLE_SUFFIXES = (".csv", ".xlsx", ".xlsm")
 
 
 # ===========================================================================
@@ -113,7 +111,7 @@ def norm_key(value: str) -> str:
 
 
 # ===========================================================================
-# 2. 表格读取 (csv / tsv / xlsx / stdin) —— 零第三方依赖
+# 2. 表格读取 (csv / tsv / xlsx) —— 零第三方依赖
 # ===========================================================================
 
 def _local(tag: str) -> str:
@@ -276,13 +274,11 @@ def _read_xlsx(path: Path, sheet_name: str = "") -> list[list[str]]:
 
 
 def read_table(path: str, sheet_name: str = "") -> list[list[str]]:
-    """读 csv / tsv / xlsx, 或从标准输入读。返回逐行的字符串矩阵。"""
-    if path == STDIN_TOKEN:
-        raw = sys.stdin.buffer.read()
-        if not raw.strip():
-            die("标准输入里没有内容。用法: cat 名单.csv | python github_inviter.py --org my-org -")
-        return _read_delimited(_decode_bytes(raw))
+    """读 csv / xlsx。返回逐行的字符串矩阵。
 
+    只支持表格文件: 一个纯文本清单每行只有一格, 装不下「邮箱 + 用户名」,
+    与其为它单独维护一套解析语义, 不如要求用户给表格。
+    """
     file_path = Path(path)
     if not file_path.is_file():
         die(f"找不到文件: {file_path}")
@@ -290,10 +286,17 @@ def read_table(path: str, sheet_name: str = "") -> list[list[str]]:
 
     if suffix in (".xlsx", ".xlsm"):
         return _read_xlsx(file_path, sheet_name)
-    if suffix in (".csv", ".tsv", ".txt"):
+    if suffix in (".csv", ".tsv"):
+        # .tsv 不算正式支持, 但它是分隔符明确的表格, 顺手认了
         text = _decode_bytes(file_path.read_bytes())
         return _read_delimited(text, "\t" if suffix == ".tsv" else None)
-    die(f"不支持的表格格式: {suffix or '(无扩展名)'}\n支持: {', '.join(TABLE_SUFFIXES)}")
+    if suffix == ".txt":
+        die(f".txt 名单不再支持了: {file_path.name}\n"
+            f"纯文本每行只有一格, 装不下「邮箱 + 用户名」两项, 也就分不出该用哪个邀请。\n"
+            f"请改用表格(.csv 或 .xlsx), 列名写 邮箱 / GitHub用户名 即可。\n"
+            f"示例见 docs/examples/")
+    die(f"不支持的文件格式: {suffix or '(无扩展名)'}\n"
+        f"支持: {', '.join(TABLE_SUFFIXES)}")
 
 
 # ===========================================================================
@@ -510,47 +513,8 @@ def build_records(rows: Sequence[Sequence[str]], cols: dict[str, int | None]) ->
 
 
 # ===========================================================================
-# 5. 输入来源解析 (命令行 / 文件 / 标准输入)
+# 5. 输入来源解析 (表格文件 + 可选的命令行补充)
 # ===========================================================================
-
-def looks_like_file(value: str) -> bool:
-    if value == STDIN_TOKEN:
-        return True
-    path = Path(value.strip().strip('"').strip("'"))
-    return path.is_file()
-
-
-def looks_like_path(value: str) -> bool:
-    """判断一个参数是不是「用户想给文件」。
-
-    有表格扩展名、有路径分隔符、或者带引号的, 都算 —— 这样
-    `--org o 名单.xlsx` 打错字时会明确报「找不到文件」, 而不是把一个
-    文件名当成 GitHub 用户名发出去。
-    """
-    text = value.strip()
-    if text == STDIN_TOKEN:
-        return True
-    path = Path(text.strip(QUOTES))
-    if path.suffix.lower() in TABLE_SUFFIXES:
-        return True
-    if any(sep in text for sep in ("\\", "/", ":")):
-        return True
-    return text.startswith(('"', "'"))
-
-
-def _declared_as_identity(value: str) -> bool:
-    """这个参数本身已经明确是用户名/邮箱/个人主页, 就别再当成文件路径。
-
-    否则 `github.com/dave` 这种写法会被误判成打错的文件路径。
-    """
-    text = value.strip()
-    if clean_email(text)[0]:
-        return True
-    if "github.com/" in text.lower():
-        return True
-    login = clean_login(text)
-    return bool(login) and bool(LOGIN_RE.match(login))
-
 
 def records_from_tokens(tokens: Iterable[str]) -> list[Record]:
     """把命令行的 'alice' / 'a@b.com' / '@alice' 变成 Record。
@@ -595,29 +559,28 @@ class InputSource:
 
 
 def resolve_input(args: argparse.Namespace) -> InputSource:
-    """把命令行上那一两个位置参数解释成一份记录列表。"""
+    """位置参数 = 必填的表格文件 + 可选的命令行补充输入。
+
+    只有这一条路径: 要发的一批人必须装在表格里。一个人时可以顺手写在命令行上,
+    但那只适合临时试一个, 不适合当常规用法。
+    """
     targets = [str(t) for t in (args.targets or [])]
     if not targets:
         die(_usage_hint())
 
-    file_targets = [t for t in targets if looks_like_file(t)]
-    if len(file_targets) > 1:
-        die("一次只能给一个表格文件。")
+    files = [t for t in targets if Path(t.strip('"').strip("'")).is_file()]
+    if not files:
+        die(f"找不到表格文件: {targets[0]}\n\n{_usage_hint()}")
+    if len(files) > 1:
+        die("一次只能给一个表格文件。要邀请很多人请放在同一张表里。")
     if len(targets) > 2:
-        die("最多给两个输入: 一个表格文件(或 '-'), 加一个可选的用户名/邮箱。\n"
+        die("最多给两个输入: 一个表格文件, 加一个可选的用户名/邮箱。\n"
             "要一次邀请很多人, 请把它们放进一张表里。")
 
-    if not file_targets:
-        # 长得像路径却不存在 —— 明确报错, 别把它当用户名
-        for target in targets:
-            if looks_like_path(target) and not _declared_as_identity(target):
-                die(f"找不到文件: {target.strip().strip(QUOTES)}")
-        records = records_from_tokens(targets)
-        return InputSource(records, _blank_cols(), [], "命令行输入", data_rows=len(records))
-
-    source = _load_table_source(file_targets[0], args)
-    extras = [t for t in targets if t not in file_targets]
+    source = _load_table_source(files[0], args)
+    extras = [t for t in targets if t not in files]
     if extras:
+        # 命令行上额外写的人是当场敲的, 认不出来直接报错, 不给"可疑"提醒
         extra_records = records_from_tokens(extras)
         offset = source.data_rows
         for index, record in enumerate(extra_records, start=1):
@@ -627,42 +590,6 @@ def resolve_input(args: argparse.Namespace) -> InputSource:
         source.file_rows += len(extra_records)
         source.origin += f" + 命令行上的 {len(extra_records)} 个输入"
     return source
-
-
-def _rows_to_records(rows: Sequence[Sequence[str]]) -> tuple[list[Record], int]:
-    """单列清单: 每行一个用户名/邮箱, 逐行按内容判断。
-
-    这样 `docs/examples/名单示例.txt` 那种「每行一个用户名」的名单能直接用,
-    每行只取第一个逗号/制表符/分号分隔的字段, 所以整行粘过来的
-    `用户名,邮箱,备注` 也认。
-
-    返回 (记录, 被跳过的空行/注释行数)。
-    """
-    records: list[Record] = []
-    skipped = 0
-    for offset, row in enumerate(rows):
-        raw = str(row[0]) if row else ""
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            skipped += 1   # 空行和 # 注释行(示例名单文件里就有)
-            continue
-        first = re.split(r"[,\t;]|\s{2,}", raw)[0].strip().strip(QUOTES)
-        if not first:
-            skipped += 1
-            continue
-        email, note = clean_email(first)
-        if email:
-            records.append(Record(row=offset + 1, email=email,
-                                  notes=[note] if note else []))
-            continue
-        login = clean_login(first)
-        if not login:
-            skipped += 1
-            continue
-        notes = []
-        if not LOGIN_RE.match(login):
-            notes.append(f"用户名格式可疑(GitHub 用户名只允许字母数字和单个连字符): {clip(login, 40)}")
-        records.append(Record(row=offset + 1, login=login, notes=notes))
-    return records, skipped
 
 
 def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
@@ -683,21 +610,6 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
             die(f'--cols "{args.cols}" 里没有一列是 email 或 username, 没东西可发。\n'
                 f'每项只能填 username / email / name, 不想用的列写 "-" 占位。\n'
                 f'例如: --cols "name,email,username"')
-    elif not args.no_header and (target.lower().endswith(".txt") or width == 1):
-        # 纯清单文件(每行一个用户名/邮箱): 不把第一行当表头, 免得吃掉一个人
-        records, skipped = _rows_to_records(rows)
-        if not records:
-            die(f"{target}: 这一行行看下来, 没有能识别的用户名或邮箱。")
-        origin = "标准输入" if target == STDIN_TOKEN else f"名单 {Path(target).name}"
-        return InputSource(
-            records=records,
-            columns={"email": 0, "username": 0, "name": None},
-            header=[],
-            origin=origin,
-            table_path=None if target == STDIN_TOKEN else Path(target),
-            data_rows=len(rows) - skipped,
-            file_rows=len(rows),
-        )
     elif args.no_header:
         cols["username"], cols["email"] = 0, (1 if width >= 2 else None)
     else:
@@ -725,19 +637,12 @@ def _load_table_source(target: str, args: argparse.Namespace) -> InputSource:
     for record in records:
         record.row += first_data   # 换算回表里的真实行号
 
-    if target == STDIN_TOKEN:
-        origin = "标准输入"
-        table_path = None
-    else:
-        origin = f"表格 {Path(target).name}"
-        table_path = Path(target)
-
     return InputSource(
         records=records,
         columns=cols,
         header=header,
-        origin=origin,
-        table_path=table_path,
+        origin=f"表格 {Path(target).name}",
+        table_path=Path(target),
         data_rows=len(data_rows),
         file_rows=len(rows),
     )
@@ -757,10 +662,10 @@ def _index_of(header: Sequence[str], name: str, width: int) -> int:
 
 
 def _usage_hint() -> str:
-    return ("必须给一个输入。三种写法:\n"
-            "  1) 直接写用户名/邮箱:  python github_inviter.py --org my-org alice bob@example.com\n"
-            "  2) 给一张表:          python github_inviter.py --org my-org \"收集表.xlsx\"\n"
-            "  3) 从标准输入读:      cat 名单.csv | python github_inviter.py --org my-org -")
+    return ("必须给一个表格文件:\n"
+            "  python github_inviter.py --org my-org \"收集表.xlsx\"\n"
+            "  python github_inviter.py --org my-org \"收集表.csv\"\n"
+            "表里至少有「邮箱」或「GitHub用户名」的一列。示例见 docs/examples/")
 
 
 # ===========================================================================
@@ -1382,8 +1287,10 @@ def normalize_argv(argv: Sequence[str]) -> list[str]:
     """把 `--cols -,email,username` 这种写法接住。
 
     argparse 碰到以 '-' 开头的值会以为那是另一个选项, 于是报
-    "expected one argument"。但跳过第一列的写法天生就长这样, 所以先把
-    `--cols 值` 合并成 `--cols=值` —— 对本脚本而言两种写法完全等价。
+    "expected one argument"。但「跳过第一列」的写法天生就长这样, 所以先把
+    `--cols 值` 合并成 `--cols=值` —— 两种写法完全等价。
+
+    (这跟输入是 csv 还是 xlsx 无关, 只要用得上 --cols 就需要它。)
     """
     out: list[str] = []
     index = 0
@@ -1405,19 +1312,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="批量邀请人加入 GitHub 组织, 可选顺手加入指定 Team(默认 dry-run, 不发任何东西)",
         epilog=(
-            "输入的三种写法:\n"
-            "  python github_inviter.py --org my-org alice bob@example.com\n"
+            "输入: 一个表格文件(.xlsx / .csv)\n"
             "  python github_inviter.py --org my-org \"收集表.xlsx\"\n"
-            "  cat 名单.csv | python github_inviter.py --org my-org -\n"
             "\n"
-            "列顺序不一样时用 --cols 说明(位置从 1 开始):\n"
-            "  --cols \"username,email\"      第1列用户名、第2列邮箱(默认约定)\n"
+            "表里至少有「邮箱」或「GitHub用户名」一列; 列顺序随便, 靠表头名字认:\n"
+            "  姓名 / 邮箱 / GitHub用户名\n"
+            "示例文件见 docs/examples/\n"
+            "\n"
+            "表头认不出来时用 --cols 按位置说明(位置从 1 开始):\n"
             "  --cols \"name,email,username\" 第1列姓名、第2列邮箱、第3列用户名\n"
-            "  --cols \"-,username,email\"    跳过第1列\n"
+            "  --cols \"username,email\"      第1列用户名、第2列邮箱\n"
+            "  --cols \"-,email,username\"    跳过第1列\n"
         ),
     )
-    parser.add_argument("targets", nargs="*", metavar="目标",
-                        help="一个用户名/邮箱, 或一个表格文件路径(.xlsx/.csv/.tsv), 或 '-' 读标准输入")
+    parser.add_argument("targets", nargs="*", metavar="表格",
+                        help="表格文件路径(.xlsx / .csv); 可选再跟一个用户名/邮箱临时补一个")
     parser.add_argument("--org", required=True, help="组织名(slug), 例如 my-org")
 
     team = parser.add_argument_group("team(可选)")

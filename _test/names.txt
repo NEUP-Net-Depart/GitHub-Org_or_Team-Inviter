@@ -1,4 +1,0 @@
-alice
-bob,ignored@example.com,ignored-name
-@carol
-https://github.com/dave

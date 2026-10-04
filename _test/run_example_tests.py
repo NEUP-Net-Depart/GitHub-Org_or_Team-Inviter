@@ -20,7 +20,6 @@ CASES = [
     ("只有姓名和邮箱.csv", ["docs/examples/只有姓名和邮箱.csv"], "待处理 2 条"),
     # 列顺序不一样: 靠表头名字认列, 不需要 --cols
     ("列顺序不一样.csv", ["docs/examples/列顺序不一样.csv"], "待处理 2 条"),
-    ("名单示例.txt", ["docs/examples/名单示例.txt"], "待处理 4 条"),
     # 无表头的表才需要 --cols 按位置说明
     ("无表头 + --cols",
      ["--no-header", "docs/examples/收集表示例.csv", "--cols", "name,email,username"],

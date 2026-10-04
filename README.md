@@ -16,7 +16,7 @@
 
 **3. 建一个 token，把 token 直接写进脚本同目录的 `token.txt` 第一行，其他什么都不要有。**
 
-去 <https://github.com/settings/tokens> 建：
+去 <https://github.com/settings/tokens> 建token：
 
 | token 类型 | 需要的权限 |
 |---|---|
@@ -25,7 +25,7 @@
 
 > 细粒度 token 还要**组织那边批准**一下：组织 Settings → Personal access tokens → Pending requests。
 > 没批准的话调用会一直失败。
->
+>（如果你是owner似乎不需要批准？蛮看一下吧）
 > `token.txt` 已被 `.gitignore` 挡住，不会误提交。
 
 **环境**：Python 3.10+，**不需要装任何第三方库**。
@@ -34,9 +34,14 @@
 
 ## 二、你的输入怎么写
 
-三种输入随便挑一种。**示例文件都在 [`docs/examples/`](docs/examples/)**，照着改就行。
+**脚本只收一个表格文件（`.csv` 或 `.xlsx`）。**
+因为要发出去的一组人必须同时装得下「邮箱」和「GitHub用户名」两项 —— 有用户名才能可靠邀请、
+才能进 Team；只有邮箱时才退回邮箱邀请。一行只写一个名字的纯文本装不下这些，
+所以**不支持 `.txt` 名单、也不支持管道输入**。
 
-### 方式 1：给一张表（.xlsx / .csv / .tsv）——最常用
+**示例文件都在 [`docs/examples/`](docs/examples/)**，照着改就行。
+
+### 表要长什么样
 
 推荐的表结构（**列顺序任意**，脚本按表头名字认列）：
 
@@ -52,9 +57,9 @@
 - **姓名**：只用来在结果里显示是谁，不参与匹配账号
 - **邮箱 / GitHub用户名**：至少要有一个。两个都有最稳
 - 表里**可以只填邮箱**（示例 [`只有姓名和邮箱.csv`](docs/examples/只有姓名和邮箱.csv)）——
-  能发，但只有邮箱时对方必须已把该邮箱验证到自己账号上才点得动邀请（见第五节）
+  能发，但只有邮箱时对方必须已把该邮箱验证到自己账号上才点得动邀请, 而且这只能做到邀请到`组织`，无法实现邀请到`team`
 
-列名认这些，中英文都行：
+列名认这些：
 
 | 用途 | 认得的表头 |
 |---|---|
@@ -83,28 +88,6 @@
 
 ```bash
 python github_inviter.py --org <组织名> 名单.csv --no-header --cols "name,email,username"
-```
-
-### 方式 2：一份纯用户名名单（.txt，每行一个）
-
-```
-zhangsan
-lisi-2026
-@wangwu
-zhaoliu@example.com
-```
-
-示例文件：[`名单示例.txt`](docs/examples/名单示例.txt)
-
-- 每行一个用户名**或**邮箱；空行和 `#` 开头的行忽略
-- `@前缀`、`https://github.com/xxx` 链接都认
-- 从表格里**整行粘过来的** `用户名,邮箱,备注` 也能用（只取第一个字段）
-
-### 方式 3：直接写在命令里（一两个人时最快）
-
-```bash
-python github_inviter.py --org <组织名> alice bob@example.com
-python github_inviter.py --org <组织名> @alice https://github.com/bob
 ```
 
 ---

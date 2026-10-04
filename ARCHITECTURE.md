@@ -38,10 +38,10 @@
 | 区段 | 关键函数 | 职责 |
 |---|---|---|
 | 1 通用 | `log/die/pad/clip/display_width` | 输出与中文按 2 列宽对齐 |
-| 2 读表 | `read_table` / `_read_xlsx_minimal` / `_read_delimited` | csv/tsv/xlsx/stdin, 零依赖 |
+| 2 读表 | `read_table` / `_read_xlsx_minimal` / `_read_delimited` | csv/tsv/xlsx, 零依赖 |
 | 3 列识别 | `detect_columns` / `locate_header` / `parse_cols_spec` | 三步定列 |
 | 4 记录 | `clean_email` / `clean_login` / `classify_cell` / `build_records` | 清洗 + 按内容归类 |
-| 5 输入 | `resolve_input` / `records_from_tokens` / `_rows_to_records` | 命令行/文件/stdin 三种来源 |
+| 5 输入 | `resolve_input` / `records_from_tokens` | 一个表格文件 + 可选的命令行补充 |
 | 6 API | `GitHub` | 限流退避、分页、各接口封装 |
 | 7 token | `resolve_token` | `--token` > 环境变量 > `token.txt` |
 | 8 结果模型 | `Outcome` / `*_LABEL` / `REMEDY` | 状态码与「原因→处理措施」映射 |
@@ -92,9 +92,19 @@ login = login_from_login_col or (login_from_email_col if not email_from_email_co
 第三步原本是「按单元格内容猜列」, 后来删掉了: 英文昵称(如 `alice`)本来就同时像用户名,
 猜错的代价是**静默处理错人**。把列的语义交给用户显式约定更可预测。
 
-另外有个自动识别: **单列文件**(或 `.txt`)按「每行一个用户名/邮箱」处理, 不做表头识别,
-免得第一行的人被当成表头吃掉。每行只取第一个逗号/制表符/分号分隔的字段,
-所以整行粘过来的 `用户名,邮箱,备注` 也能用。
+### 为什么只收表格(不支持 .txt / 管道)
+
+早期版本还支持「每行一个用户名」的纯文本清单和 stdin。**已按用户要求移除**, 理由是它
+在语义上就不够用, 而不是单纯"代码多":
+
+- 一行只有一个字段, **装不下「邮箱 + 用户名」**。于是只有用户名的人发不了邮箱邀请,
+  只有邮箱的人进不了 team 也认不出是否已是成员 —— 这个入口从一开始就带着两个能力缺口。
+- 它需要**自己一套解析语义**(跳过 `#` 注释、只取第一个逗号前的字段、逐行按内容判邮箱还是
+  用户名), 与表格分支并存。同一件事两套规则, 正是最容易长 bug 的地方。
+- 表格分支本来就能覆盖它: 想要"一行一个人", 给一个单列 csv 即可。
+
+`read_table` 现在遇到 `.txt` 会**明确报错并指向表格**(而不是静默当成单列表格),
+免得老命令升级后行为悄悄变了。
 
 ---
 
@@ -240,8 +250,7 @@ csv 侧: 自动试 `utf-8-sig` → `utf-8` → `gb18030` → `cp936` → `latin-
 
 - 代码里不硬编码 token, 运行时只打印 token 的**来源**(如「配置文件 token.txt」), 不打印内容。
 - 脚本输出、README、ARCHITECTURE、示例文件里**没有真实姓名/邮箱/用户名**。
-- `.gitignore` 挡住 `token.txt`、`.env`、`output/`, 以及 `*.xlsx` / `*.csv` / `*.tsv`
-  (收集表是最大的泄露源), 只放行 `docs/**` 下的示例模板。
+- `.gitignore` 挡住 `token.txt`、`.env`、`output/`, 以及 `*.xlsx` / `*.csv` / `*.tsv`  (收集表是最大的泄露源), 只放行 `docs/**` 下的示例模板。
 - `output/` 里的结果文件含真实邮箱, 不要提交。
 
 ---
@@ -253,10 +262,10 @@ csv 侧: 自动试 `utf-8-sig` → `utf-8` → `gb18030` → `cp936` → `latin-
 
 ```bash
 python _test/make_fixtures.py        # 造最小 xlsx(两张表/内联字符串/跳格/空行) + BOM csv
-python _test/run_offline_tests.py    # 40 项: 表头识别/--cols/csv 变体/xlsx/命令行/stdin/--limit/报错路径
+python _test/run_offline_tests.py    # 37 项: 表头识别/--cols/csv 变体/xlsx/--limit/.txt 迁移提示/报错路径
 python _test/run_output_tests.py     # 11 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类
 python _test/run_path_tests.py       # 22 项: 用假客户端驱动真实的 process_org_invites / process_team
-python _test/run_example_tests.py     #  6 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
+python _test/run_example_tests.py     #  5 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
 python _test/check_token_formats.py   #  验证 token.txt 的各种写法(裸 token / KEY=VALUE / 注释 / 引号)
 python _test/scan_pii.py              #  扫被跟踪文件里的真实个人信息(词表在 .pii-terms, 不入库)
 ```
