@@ -26,3 +26,8 @@
 
 `logs/YYYY-MM-DD-<主题>.md`, 记录: 现象 → 原因 → 处理 → 回滚方式(如果改过环境),
 以及**认知纠正**(先前判断错了、实测结论是什么)。真实姓名/邮箱/用户名不写进日志。
+
+| 日志 | 内容 |
+|---|---|
+| [`2026-10-04-merge-org-team-inviter.md`](logs/2026-10-04-merge-org-team-inviter.md) | 把两个旧脚本合并成单一 `github_inviter.py`; 离线测试抓到的 5 个真 bug; 状态值撞车; 实跑发现用户名与邮箱对不上 |
+| [`2026-10-04-pending-invite-misdiagnosis.md`](logs/2026-10-04-pending-invite-misdiagnosis.md) | 「待对方接受组织邀请」查不到头: 其实两处用户名拼写错了; 含我一次错误方向(自行加的活查)的复盘与被还原; 「网页搜得到 ≠ 用户名存在」 |

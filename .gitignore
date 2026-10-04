@@ -17,6 +17,9 @@ output/
 *.orig
 *~
 
+# 敏感词表(供 _test/scan_pii.py 扫描用)本身也是敏感信息, 绝不能入库
+.pii-terms
+
 # 只放行示例模板
 !emails.example.csv
 !users.example.txt
