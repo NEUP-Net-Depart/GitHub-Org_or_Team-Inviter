@@ -24,6 +24,11 @@ import make_fixtures  # noqa: E402  (必须在 sys.path 处理之后)
 
 PASS, FAIL = [], []
 
+# dry-run 也会把计划文件写到 `--out-dir`(默认是脚本旁的 output/)。
+# 测试不该往那个目录里堆东西 —— 那是给真实运行看结果的, 混进测试产物只会让人困惑。
+# 所以 main() 里把它指到临时目录, run() 统一加上。
+OUT_DIR = ""
+
 
 def run(args: list[str], stdin_text: str | None = None) -> tuple[int, str]:
     """跑一次脚本, 返回 (退出码, 输出)。
@@ -35,7 +40,7 @@ def run(args: list[str], stdin_text: str | None = None) -> tuple[int, str]:
     等于没切断。要用 PIPE(给空输入), 这时 isatty() 才是 False —— 这条是实测出来的。
     """
     proc = subprocess.run(
-        [sys.executable, str(SCRIPT), *args],
+        [sys.executable, str(SCRIPT), *(["--out-dir", OUT_DIR] if OUT_DIR else []), *args],
         input=stdin_text if stdin_text is not None else "",
         capture_output=True,
         text=True,
@@ -92,6 +97,8 @@ def main() -> int:
     std = str(FIX / "standard.csv")
     # 运行时造的测试表放临时目录, 跑完就没了 —— 免得 _test/ 里堆一堆生成物
     tmp_dir = Path(tempfile.mkdtemp(prefix="inviter-offline-"))
+    global OUT_DIR
+    OUT_DIR = str(tmp_dir)
 
     # --- 1. 表头自动识别 ---
     check("表头识别三列",
@@ -279,6 +286,14 @@ def main() -> int:
     check("--status 不接受位置参数",
           ["--org", "o", "--status", std],
           must_have=["只读查询"], expect_code=2)
+
+    # --- 12. 测试不该往脚本旁的 output/ 里写东西 ---
+    out_dir = ROOT / "output"
+    before = {p.name for p in out_dir.iterdir()} if out_dir.is_dir() else set()
+    run(["--org", "o", "--no-preflight", std])
+    after = {p.name for p in out_dir.iterdir()} if out_dir.is_dir() else set()
+    check_true("dry-run 的计划文件写进临时目录, 不落到脚本旁的 output/",
+               after <= before, f"多出来的: {sorted(after - before)}")
 
     # 注: 这里曾经有一项「拿 reference/ 里的真实参考收集表解析一遍」。
     # reference/ 已整体删除(项目转为稳定脚本, 旧数据不再需要), 该用例一并去掉 ——

@@ -322,7 +322,7 @@ python _test/scan_pii_history.py    # 整个历史有没有(删掉的文件也�
 不含任何真实数据, 可以随时重跑:
 
 ```bash
-python _test/run_offline_tests.py    # 45 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
+python _test/run_offline_tests.py    # 46 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
 python _test/run_output_tests.py     # 11 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类
 python _test/run_path_tests.py       # 22 项: 用假客户端驱动真实的 process_org_invites / process_team
 python _test/run_example_tests.py     #  5 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
