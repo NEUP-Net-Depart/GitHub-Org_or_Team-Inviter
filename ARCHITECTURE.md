@@ -3,7 +3,9 @@
 > 面向**维护者与 AI**: 记录设计取舍、接口细节、边界情况和踩坑。
 > 日常使用请看 [README.md](README.md)。
 
-全部逻辑在单文件 `github_inviter.py` 里(约 1800 行, **零第三方依赖**, Python 3.10+)。
+实现按职责拆成 `inviter/` 包(**零第三方依赖**, Python 3.10+)。仓库根的
+`github_inviter.py` 只是转发用的**兼容层**, 但入口仍然是它 —— 旧命令、旧文档、
+`import github_inviter as g` 全都照旧能用(见下面「模块地图」)。
 脚本本身**不发邮件** —— 邀请邮件由 GitHub 发出。
 
 ```
@@ -16,7 +18,7 @@
 
 ## 一、必须先知道的硬限制
 
-这些全部来自实测(见 [dsh/logs](dsh/logs)), 直接决定了上面的设计:
+这些全部来自实测(见 [.dsh/logs](.dsh/logs)), 直接决定了上面的设计:
 
 | 事实 | 影响 |
 |---|---|
@@ -35,19 +37,52 @@
 
 ## 二、模块地图
 
-| 区段 | 关键函数 | 职责 |
+| 模块 | 职责 | 关键函数 |
 |---|---|---|
-| 1 通用 | `log/die/pad/clip/display_width` | 输出与中文按 2 列宽对齐 |
-| 2 读表 | `read_table` / `_read_xlsx_minimal` / `_read_delimited` | csv/tsv/xlsx, 零依赖 |
-| 3 列识别 | `detect_columns` / `locate_header` / `parse_cols_spec` | 三步定列 |
-| 4 记录 | `clean_email` / `clean_login` / `classify_cell` / `build_records` | 清洗 + 按内容归类 |
-| 5 输入 | `resolve_input` / `records_from_tokens` | 一个表格文件 + 可选的命令行补充 |
-| 6 API | `GitHub` | 限流退避、分页、各接口封装 |
-| 7 token | `resolve_token` | `--token` > 环境变量 > `token.txt` |
-| 8 结果模型 | `Outcome` / `*_LABEL` / `REMEDY` | 状态码与「原因→处理措施」映射 |
-| 9 打印 | `print_results` / `print_summary` / `print_issues` / `print_retry_list` | 控制台输出 |
-| 10 续跑 | `load_history` | 读历史 `results-*.jsonl` |
-| 11 主流程 | `main` / `process_org_invites` / `process_team` / `write_outputs` | 串起来 |
+| `constants.py` | 常量 + **项目根锚点** | `APP_NAME` / `PROJECT_ROOT` / 各正则 |
+| `console.py` | 输出与中文按 2 列宽对齐 | `log` / `die` / `pad` / `clip` / `display_width` |
+| `tableio.py` | csv/tsv/xlsx 零依赖读取 | `read_table` / `_read_xlsx_minimal` / `_read_delimited` |
+| `columns.py` | 三步定列 | `detect_columns` / `locate_header` / `parse_cols_spec` / `norm_key` / `_blank_cols` |
+| `records.py` | 清洗 + 按内容归类 | `clean_email` / `clean_login` / `classify_cell` / `build_records` / `Record` |
+| `prompt.py` | 表头认不出时问人 | `ask_columns` / `ask_data_rows` / `parse_row_range` / `_ask_line` |
+| `input_source.py` | 一个表格文件 + 可选的命令行补充 | `resolve_input` / `records_from_tokens` / `InputSource` |
+| `github_api.py` | REST 客户端(限流退避、分页、各接口封装) | `GitHub` / `ApiError` / `describe_error` |
+| `tokens.py` | token 解析 | `resolve_token`(`--token` > 环境变量 > `token.txt`) |
+| `outcomes.py` | 结果模型与状态码 | `Outcome` / `S_*` / `T_*` / `ORG_LABEL` / `TEAM_LABEL` / `REMEDY` |
+| `report.py` | 控制台输出 | `print_results` / `print_summary` / `print_issues` / `print_retry_list` / `print_status_report` |
+| `storage.py` | 落盘 + 续跑历史 | `write_outputs` / `load_history` |
+| `workflow.py` | 两档动作与管道步骤 | `process_org_invites` / `process_team` / `deduplicate` / `select_team` |
+| `cli.py` | 参数表 + 组装(**唯一的组装点**) | `parse_args` / `normalize_argv` / `main` |
+
+依赖方向**只能自上而下, 不许成环**(`_test/run_module_tests.py` 会逐个模块单独导入来验):
+
+```
+constants / console
+  └─► columns / records / tokens
+        └─► tableio / prompt / github_api / outcomes
+              └─► input_source / report / storage
+                    └─► workflow
+                          └─► cli
+                                └─► github_inviter.py (兼容层, 无逻辑)
+```
+
+### 兼容层 `github_inviter.py` 的三条约定
+
+1. **里面不许有 `def` / `class`。** 它只做 `from inviter.… import …`, 再接
+   `if __name__ == "__main__": raise SystemExit(main())`。**新功能加到 `inviter/` 下**,
+   要暴露给外面就在兼容层的 `__all__` 里补一行 —— 这条由测试用 AST 盯着, 加逻辑会当场红。
+2. **它导出的是「同一批函数对象」的引用, 不是包装。** 所以
+   `github_inviter._stdin_is_interactive = ...` 这种替换**无效**: 内部调用点引用的是
+   `inviter.prompt` 里的那个名字。要替行为请改 `inviter.prompt.<名字>`
+   (或等价的 `github_inviter.prompt.<名字>`)。
+   正因如此, `input_source` 里一律写 `prompt.ask_columns(...)` 这种**模块限定调用**,
+   保证 patch 点只有一个 —— 写成 `from .prompt import ask_columns` 会让替换静默失效
+   (这一条是实测踩出来的, `_test/run_prompt_tests.py` 现在就这么替换)。
+3. **`constants.PROJECT_ROOT` 是「脚本旁边」的唯一解释。** 约定 `inviter/` 就放在仓库根下,
+   于是 `PROJECT_ROOT == 仓库根 == github_inviter.py 所在目录`。子模块**不许**再自己算
+   `Path(__file__).parent` —— 那会指向 `inviter/`, 让 `token.txt` 和默认 `output/`
+   一起跑偏。这是拆模块时最容易踩的坑, 已有测试专门盯着它。
+
 
 ---
 
@@ -159,8 +194,8 @@ login = login_from_login_col or (login_from_email_col if not email_from_email_co
 在成员列表里                      -> already_member (跳过)
 邮箱/用户名 在待处理邀请里        -> already_invited (跳过)
 历史 results-*.jsonl 里已成功过   -> skipped_resumed (跳过, --no-resume 可关)
---no-preflight                    -> planned (状态不明)
-dry-run                           -> planned
+--no-preflight                    -> unknown  (状态未知: 根本没查, 不能叫「计划要发」)
+dry-run(预检过)                   -> planned  (确认可以发, 但这次没发)
 否则                              -> POST 发邀请
 ```
 
@@ -239,8 +274,68 @@ dry-run                 -> team_added (计划)
   **必须用 `utf-8-sig` 读** —— 结果文件带 BOM 时用 `utf-8` 读会让第一行 JSON 解析失败
   被静默丢掉, 表现为「续跑少跳了一个人」。
 
-`--no-preflight` 时状态是「不知道」, 用独立的 `planned` 状态, 绝不冒充「已发出」;
-即使配了 `--execute` 也不会发请求(没预检就发等于盲发)。
+`--no-preflight` 时状态是「不知道」, 用独立的 `unknown` 状态, 绝不冒充「已发出」;
+即使配了 `--execute` 也不会发请求(没预检就发等于盲发)。这条容易被误会 —— 用户以为
+「加了 `--execute` 就发出去了」, 所以它是**出声**的: 两个参数一起给会当场打印
+「`--no-preflight` 优先, 本次一封都不会发」, 收尾也不会再劝他加一个刚加过的参数。
+(这两句话曾经是静默的: 想提醒的那句警告落在了一个永远走不到的分支里 ——
+`mode == "execute"` 的分支必然 `needs_api == True`。现在有离线测试钉着。)
+
+### 汇总行是怎么算出来的
+
+「组织邀请: …」那一行是一个**分区**: 每个状态只进一个桶, 末尾的**「合计」= 下面逐行
+结果的总人数**。具名桶相加和合计之间的差额, 一定来自 `ORG_UNTOUCHED`(没联系方式 /
+表里重复 / `--limit` 没轮到), 而那三类在明细行里逐条列着 —— 所以这一行可以直接当账对。
+
+```
+组织邀请: 计划邀请 1 人 | 已是组织成员 5 人 | 已有待处理邀请 0 人 | 邀请失败 0 人 | 合计 6 人
+  - 计划邀请(dry-run): 1 人
+  - 已是组织成员: 5 人
+```
+
+第一桶叫什么由模式决定, 后面几桶固定:
+
+| 怎么跑 | 第一桶 | 含义 |
+|---|---|---|
+| `--execute` | 已发出邀请 N 人 | 这次真发了 |
+| dry-run(预检过) | 计划邀请 N 人 | 确认可以发, 但这次没发 |
+| `--no-preflight` | 状态未知(未预检) N 人 | **没查过**, 连他能不能发都不知道 |
+
+| 桶(按行的顺序) | 装什么 | 状态值 |
+|---|---|---|
+| 第一桶 | 见上表, 三选一 | `invited` / `planned` / `unknown` |
+| 已是组织成员 | 本来就在组织里 | `already_member` |
+| 跳过(上次已成功) | 续跑记忆生效(>0 时才出现) | `skipped_resumed` |
+| 已有待处理邀请 | 对方那边已经挂着一封 | `already_invited` |
+| 邀请失败 | 真失败, 明细在后面单列 | `failed` |
+| **合计** | 本次纳入统计的总人数 | 全部状态之和 |
+
+具名桶的措辞一律取自 `ORG_LABEL`, 免得汇总和明细两处叫法漂移(曾经上面写「已是成员」、
+下面明细写「已是组织成员」)。
+
+**末尾不要放「桶」** —— 这里踩过两次:
+
+1. `planned` 和 `already_invited` 曾经既被单独列出来、又被末尾那个总数数了一遍。4 行的表
+   读出「计划邀请 4 人 … 跳过 4 人」, 字面像 8 个人; 更极端的一次是 12 行的表, 各桶相加
+   有 22 人。
+2. 改成只装 `ORG_UNTOUCHED` 之后给它起名「本次没动」, 结果一眼就被看穿: 那措辞像在描述
+   **整次运行**(dry-run 本来就什么都没发), 而它其实只描述一类行; 恒为 0 时更是废话。
+
+所以末尾只放「合计」, 一个不会重复计数、也不需要解释的词。改汇总之前先看状态归类
+(定义都在 `inviter/outcomes.py`):
+
+| 集合 | 含义 |
+|---|---|
+| `ORG_OK` | 成功, 或本来就无需动作 |
+| `ORG_SKIP` | 有意不动作(对方已有邀请 / 这一行本身没什么可做的) |
+| `ORG_PENDING` | 悬着: 计划要发、或没预检状态不明 —— 都还不算「办结」 |
+| `ORG_UNTOUCHED` | `ORG_SKIP` 里跟对方无关的那部分(合计与具名桶之间的差额) |
+| `ORG_SETTLED` | 已有终态, 可以写进续跑历史(= `ORG_OK \| ORG_SKIP`) |
+
+这五个集合 + `failed` 覆盖全部状态且**两两不重叠**: `_test/run_module_tests.py` 断言
+这一点, `_test/run_output_tests.py` 还会把三种模式的汇总各数一遍、断言合计等于总人数、
+且差额恰好等于 `ORG_UNTOUCHED` 的人数。**加新状态时必须同时想清楚它属于哪个桶**,
+否则汇总立刻开始漏人或重复计数。
 
 ### 状态值与处理措施
 
@@ -322,15 +417,25 @@ python _test/scan_pii_history.py    # 整个历史有没有(删掉的文件也�
 不含任何真实数据, 可以随时重跑:
 
 ```bash
-python _test/run_offline_tests.py    # 46 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径
-python _test/run_output_tests.py     # 11 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类
+python _test/run_offline_tests.py    # 51 项: 表头识别/--cols/--skip-rows/--no-header/csv 变体/xlsx/--limit/报错路径/汇总分区/--no-preflight 与 --execute 的冲突
+python _test/run_output_tests.py     # 12 项: csv+jsonl 内容/续跑 BOM 坑/状态值不重名/422 归类/汇总的合计与差额
 python _test/run_path_tests.py       # 22 项: 用假客户端驱动真实的 process_org_invites / process_team
 python _test/run_example_tests.py     #  6 项: 验证 docs/examples/ 下的示例文件真的能被正确解析
 python _test/run_prompt_tests.py      #  7 项: 交互提问(替换掉终端判断和 input, 模拟人的回答)
 python _test/check_token_formats.py   #  验证 token.txt 的各种写法(裸 token / KEY=VALUE / 注释 / 引号)
+python _test/run_module_tests.py      #  9 项: 结构体检(兼容层无逻辑/不反向依赖/无环/PROJECT_ROOT/导出面/状态表一致/状态归类不重不漏/两个入口等价)
 python _test/scan_pii.py              #  扫被跟踪文件里的真实个人信息(词表在 .pii-terms, 不入库)
 python _test/scan_pii_history.py      #  扫整个 git 历史(含 token.txt 里的 token 值), 推送前跑
 ```
+
+`run_prompt_tests.py` 替换的是 **`g.prompt._stdin_is_interactive` / `g.prompt._ask_line`**
+(即 `inviter/prompt.py` 里那两个名字), 不是兼容层上的同名属性 —— 原因见第二节约定 2。
+
+`run_module_tests.py` 查的是**结构**而不是行为(行为由上面几套盯着): 它用 AST 确认兼容层里
+没有 `def`/`class`、`inviter/` 不反向引用兼容层、没有两个模块重复定义同名顶层函数; 用子进程
+逐个导入确认无循环导入; 并断言 `PROJECT_ROOT` 指在仓库根、默认输出目录是 `PROJECT_ROOT/output`、
+三张状态表与状态常量一一对上(**搬家丢一个状态值会在这里当场现形**), 以及状态归类集合
+两两不重叠、合起来覆盖全部状态(汇总行「不漏人不重复计数」的结构保证)。
 
 ### 夹具为什么不在版本库里
 
@@ -378,8 +483,19 @@ python _test/make_fixtures.py --force    # 全部重造(改了夹具内容想重
 
 ## 十一、维护时的注意点
 
-- 改状态值时, 同步改 `ORG_LABEL` / `TEAM_LABEL` / `REMEDY`, 并跑 `run_output_tests.py`。
+- **新能力加到 `inviter/` 下的对应模块**, 不要往 `github_inviter.py` 里写逻辑 ——
+  它只是兼容层, 有 AST 检查盯着; 要暴露给外部就在它的 `__all__` 里补一行。
+- 加/改 import 后跑 `python _test/run_module_tests.py`: 它逐个模块单独导入, 能抓住循环导入。
+- 改状态值时, 同步改 `ORG_LABEL` / `TEAM_LABEL` / `REMEDY`, 并跑 `run_output_tests.py`
+  与 `run_module_tests.py`(后者检查三张表的键集合与状态常量一致)。
+- **加新状态时还要想清楚它属于哪个归类集合**(`ORG_OK` / `ORG_SKIP` / `ORG_PENDING` /
+  `failed`)以及进不进汇总行的哪个桶 —— 忘了这一步, 汇总行会静默开始漏人或重复计数,
+  而这正是「计划邀请 4 人 … 跳过 4 人」那个 bug 的成因。两个套件都会拦。
+- 定位「脚本旁边」一律用 `constants.PROJECT_ROOT`, **别用 `Path(__file__)`** ——
+  子模块里的 `__file__` 指向 `inviter/`。
 - 改 `build_records` 后务必跑 `run_offline_tests.py` —— 归类顺序和备注是两个出过 bug 的地方。
 - 加新接口时, `GitHub.request` 已经负责退避重试, 别在调用处再套一层 sleep(除搜索接口的
   30/分钟限速需要自己 `time.sleep(2)`)。
 - `--delay` 默认 2 秒是有意的: 这个接口官方明确写了可能触发二级限流, 别为了快把它去掉。
+- 拆模块这类纯搬家, 验证方法是**重构前先录一份输出快照**, 搬完逐字节 diff
+  (`--help` 加几个 `--no-preflight` 的 dry-run 就够; 只归一化时间戳和耗时秒数)。

@@ -8,7 +8,8 @@ description: Use when running, troubleshooting, or verifying batch GitHub organi
 **目标是「没人被漏掉、也没有人被重复打扰」。** 这个脚本会用你的组织 owner 身份
 真的发邀请邮件, 所以每一步都要先看计划再动手。
 
-涉及的文件: 脚本 `github_inviter.py`, 结果 `output/results-*.csv|jsonl`,
+涉及的文件: 脚本 `github_inviter.py`(入口; 实现按模块拆在 `inviter/` 下),
+结果 `output/results-*.csv|jsonl`,
 设计细节 [ARCHITECTURE.md](../../../ARCHITECTURE.md), 使用者说明 [README.md](../../../README.md)。
 
 ## 铁律

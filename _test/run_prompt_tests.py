@@ -6,6 +6,11 @@
   1. 非终端环境下必须"明确报错"而不是挂住
   2. parse_row_range 对各种回答的解析
   3. 用 monkeypatch 把 _stdin_is_interactive 和 _ask_line 换掉, 跑完整流程
+
+注意替换的目标是 **g.prompt 上的那两个名字**(它们住在 inviter/prompt.py):
+代码搬家后, 提问的调用点在 inviter.input_source 里写的是 `prompt._stdin_is_interactive()`,
+所以只有替换 g.prompt 才拦得住。替换兼容层 g.prompt._stdin_is_interactive 是无效的
+—— 那只是对同一个函数对象的一份引用, 改了不影响内部调用点。
 """
 from __future__ import annotations
 
@@ -118,11 +123,11 @@ report("非终端环境明确报错且给出出路", problems)
 
 # ---------- 3. 模拟人回答: 先答列顺序, 再答数据行范围 ----------
 problems = []
-orig_isatty, orig_ask = g._stdin_is_interactive, g._ask_line
+orig_isatty, orig_ask = g.prompt._stdin_is_interactive, g.prompt._ask_line
 try:
-    g._stdin_is_interactive = lambda: True
+    g.prompt._stdin_is_interactive = lambda: True
     answers = iter(["-,username,email,name", "2"])      # 第1问列顺序, 第2问行范围
-    g._ask_line = lambda prompt: next(answers)
+    g.prompt._ask_line = lambda prompt: next(answers)
     source = g._load_table_source(str(weird), args())
     if len(source.records) != 2:
         problems.append(f"应解析出 2 条(第2、3行), 实际 {len(source.records)}")
@@ -135,35 +140,35 @@ try:
     if source.columns.get("email") != 2 or source.columns.get("username") != 1:
         problems.append(f"列映射不对: {source.columns}")
 finally:
-    g._stdin_is_interactive, g._ask_line = orig_isatty, orig_ask
+    g.prompt._stdin_is_interactive, g.prompt._ask_line = orig_isatty, orig_ask
 report("回答列顺序 + 行范围 -> 列和行都对", problems)
 
 # ---------- 4. 模拟人回答 "0"(整张表都是数据) ----------
 problems = []
 try:
-    g._stdin_is_interactive = lambda: True
+    g.prompt._stdin_is_interactive = lambda: True
     answers = iter(["-,username,email,name", "0"])
-    g._ask_line = lambda prompt: next(answers)
+    g.prompt._ask_line = lambda prompt: next(answers)
     source = g._load_table_source(str(weird), args())
     if len(source.records) != 3:
         problems.append(f"应解析出 3 条, 实际 {len(source.records)}")
     if source.records[0].row != 1:
         problems.append(f"首行行号应为 1, 实际 {source.records[0].row}")
 finally:
-    g._stdin_is_interactive, g._ask_line = orig_isatty, orig_ask
+    g.prompt._stdin_is_interactive, g.prompt._ask_line = orig_isatty, orig_ask
 report('回答 "0" -> 整张表都是数据', problems)
 
 # ---------- 4.5 列顺序那问直接回车 -> 按老约定兜底 ----------
 problems = []
 try:
-    g._stdin_is_interactive = lambda: True
+    g.prompt._stdin_is_interactive = lambda: True
     answers = iter(["", "2"])
-    g._ask_line = lambda prompt: next(answers)
+    g.prompt._ask_line = lambda prompt: next(answers)
     source = g._load_table_source(str(weird), args())
     if source.columns.get("username") != 0 or source.columns.get("email") != 1:
         problems.append(f"回车应兜底成第1列用户名/第2列邮箱, 实际 {source.columns}")
 finally:
-    g._stdin_is_interactive, g._ask_line = orig_isatty, orig_ask
+    g.prompt._stdin_is_interactive, g.prompt._ask_line = orig_isatty, orig_ask
 report("列顺序直接回车 -> 按老约定兜底", problems)
 
 # ---------- 5. 表头认得出时不该提问 ----------
@@ -172,29 +177,29 @@ normal = work / "normal.csv"
 normal.write_text("姓名,邮箱,GitHub用户名\n甲,a@example.com,alice\n乙,b@example.com,bob\n",
                   encoding="utf-8")
 try:
-    g._stdin_is_interactive = lambda: (_ for _ in ()).throw(
+    g.prompt._stdin_is_interactive = lambda: (_ for _ in ()).throw(
         AssertionError("表头认得出来时不该提问!"))
-    g._ask_line = lambda prompt: (_ for _ in ()).throw(
+    g.prompt._ask_line = lambda prompt: (_ for _ in ()).throw(
         AssertionError("表头认得出来时不该提问!"))
     source = g._load_table_source(str(normal), args())
     if len(source.records) != 2:
         problems.append(f"应解析出 2 条, 实际 {len(source.records)}")
 finally:
-    g._stdin_is_interactive, g._ask_line = orig_isatty, orig_ask
+    g.prompt._stdin_is_interactive, g.prompt._ask_line = orig_isatty, orig_ask
 report("表头认得出 -> 完全不提问", problems)
 
 # ---------- 6. 给了 --cols 且表头认不出 -> 只问行范围, 列按 --cols ----------
 problems = []
 try:
-    g._stdin_is_interactive = lambda: True
-    g._ask_line = lambda prompt: "2"        # 只该问一次(列已经由 --cols 指定)
+    g.prompt._stdin_is_interactive = lambda: True
+    g.prompt._ask_line = lambda prompt: "2"        # 只该问一次(列已经由 --cols 指定)
     source = g._load_table_source(str(weird), args(cols="-,username,email,name,-"))
     if len(source.records) != 2:
         problems.append(f"应 2 条, 实际 {len(source.records)}")
     if source.columns.get("email") != 2:
         problems.append(f"--cols 的列映射应生效: {source.columns}")
 finally:
-    g._stdin_is_interactive, g._ask_line = orig_isatty, orig_ask
+    g.prompt._stdin_is_interactive, g.prompt._ask_line = orig_isatty, orig_ask
 report("--cols + 表头认不出 -> 只问行范围, 列按 --cols", problems)
 
 import shutil  # noqa: E402

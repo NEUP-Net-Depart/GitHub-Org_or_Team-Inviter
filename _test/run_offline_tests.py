@@ -264,8 +264,11 @@ def main() -> int:
           expect_code=0)
     check("--limit 截断的人不算失败",
           ["--org", "o", "--no-preflight", std, "--limit", "2"],
-          must_have=["失败 0 人"],
-          must_not=["邀请失败"],
+          must_have=["邀请失败 0 人"],
+          # 汇总行现在**永远**有「邀请失败 0 人」这一节, 所以不能再拿「邀请失败」四个字
+          # 当「有失败」的判据。改盯真正的失败痕迹: 汇总的明细行("- 邀请失败: N 人")
+          # 和失败明细区块, 两者都只在真有失败时才出现。
+          must_not=["- 邀请失败", "失败明细"],
           expect_code=0)
     check("--limit 覆盖重复行时不会多处理人",
           ["--org", "o", "--no-preflight", "--no-header", str(FIX / "noheader.csv"),
@@ -294,6 +297,45 @@ def main() -> int:
     after = {p.name for p in out_dir.iterdir()} if out_dir.is_dir() else set()
     check_true("dry-run 的计划文件写进临时目录, 不落到脚本旁的 output/",
                after <= before, f"多出来的: {sorted(after - before)}")
+
+    # --- 13. --no-preflight 会盖掉 --execute: 必须出声, 且真的没发 ---
+    #
+    # 这俩一起给是矛盾的: --no-preflight 的定义就是「只看解析结果」。行为上仍然不发
+    # 任何请求(没预检就发等于盲发), 但**必须说出来** —— 用户很容易以为「加了
+    # --execute 就发出去了」。它曾经是完全静默的: 想提醒的那句警告落在了一个永远
+    # 走不到的分支里, 收尾还劝用户去加一个他刚加过的参数。所以这里同时钉住
+    # 「出声」和「真没发」两件事。
+    check("--no-preflight + --execute 会出声说明 --execute 没生效",
+          ["--org", "o", "--no-preflight", "--execute", std],
+          must_have=["--no-preflight 优先", "一封都不会发"],
+          must_not=["已开启 --execute", "确认无误后加 --execute"],
+          expect_code=0)
+    results_before = {p.name for p in Path(OUT_DIR).glob("results-*.jsonl")}
+    run(["--org", "o", "--no-preflight", "--execute", std])
+    results_after = {p.name for p in Path(OUT_DIR).glob("results-*.jsonl")}
+    check_true("--no-preflight + --execute 真的没执行(没写出 results-*.jsonl)",
+               results_after <= results_before,
+               f"多出来的: {sorted(results_after - results_before)}")
+
+    # --- 14. 汇总行是分区: 具名桶 + 差额 == 合计 ---
+    #
+    # 4 行的表曾经读出「计划邀请 4 人 … 跳过 4 人」—— 同一批人数了两遍, 字面像 8 个人。
+    # 末尾那个桶一度改叫「本次没动」, 还是别扭(像在说整次运行, 恒为 0 时是废话),
+    # 现在只放「合计」; 没被具名的差额(缺联系方式 / 重复 / --limit 没轮到)在明细行里。
+    check("--limit 截断的进明细, 汇总的「合计」等于总人数",
+          ["--org", "o", "--no-preflight", std, "--limit", "2"],
+          must_have=["状态未知(未预检) 1 人", "跳过(--limit 截断): 8 人", "合计 9 人"],
+          must_not=["跳过 8 人", "本次没动"],
+          expect_code=0)
+    check("没预检时不冒充「计划邀请」",
+          ["--org", "o", "--no-preflight", std],
+          must_have=["状态未知(未预检)"],
+          must_not=["计划邀请"],
+          expect_code=0)
+    check("汇总与明细对同一个状态用同一个叫法",
+          ["--org", "o", "--no-preflight", std],
+          must_have=["已是组织成员", "邀请失败 0 人"],
+          expect_code=0)
 
     # 注: 这里曾经有一项「拿 reference/ 里的真实参考收集表解析一遍」。
     # reference/ 已整体删除(项目转为稳定脚本, 旧数据不再需要), 该用例一并去掉 ——

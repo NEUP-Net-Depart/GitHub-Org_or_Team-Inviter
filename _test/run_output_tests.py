@@ -8,8 +8,12 @@
 """
 from __future__ import annotations
 
+import argparse
+import contextlib
 import csv
+import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -187,6 +191,60 @@ try:
 
     # ---------- 6. setup.cfg 之类不支持的扩展名 ----------
     report("不支持的扩展名会报错", [])
+
+    # ---------- 8. 汇总行是分区: 具名桶 + 差额 == 合计 ----------
+    #
+    # 立这条规矩是因为踩过: 同一批人既被单独列出来、又被末尾的「跳过」数了一遍,
+    # 4 行的表读出「计划邀请 4 人 … 跳过 4 人」, 字面像 8 个人。
+    # 现在末尾只放「合计」, 而它必须等于总人数; 具名桶没盖到的那部分, 必须是
+    # ORG_UNTOUCHED 那三类(明细行里逐条列着), 否则就是漏人或重复计数。
+    def summary_of(items: list, mode: str) -> str:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            g.print_summary(items, False, argparse.Namespace(team=None), 0.0, mode)
+        for line in buf.getvalue().splitlines():
+            if line.startswith("组织邀请: "):
+                return line
+        return "(没找到汇总行)"
+
+    common = [g.S_ALREADY_MEMBER, g.S_ALREADY_INVITED, g.S_FAILED,
+              g.S_NO_CONTACT, g.S_DUPLICATE, g.S_RESUMED, g.S_UNPROCESSED]
+    by_mode = {
+        "plan": [g.S_PLANNED, *common],
+        "execute": [g.S_INVITED, *common],
+        "unknown": [g.S_UNKNOWN, *common],
+    }
+    problems = []
+    for mode, statuses in by_mode.items():
+        items = [g.Outcome(g.Record(row=i + 1, name="甲", login="jia"), status)
+                 for status in statuses for i in range(2)]
+        line = summary_of(items, mode)
+        numbers = [int(n) for n in re.findall(r"(\d+) 人", line)]
+        if not numbers:
+            problems.append(f"mode={mode}: 汇总行里一个数字都没解析到 —— {line}")
+            continue
+        named, total = numbers[:-1], numbers[-1]
+        if total != len(items):
+            problems.append(f"mode={mode}: 合计 {total}, 一共 {len(items)} 条 —— {line}")
+        # 具名桶必然盖不满: 差额应当恰好是 ORG_UNTOUCHED 那几类
+        gap = total - sum(named)
+        want = sum(1 for status in statuses for _ in range(2) if status in g.ORG_UNTOUCHED)
+        if gap != want:
+            problems.append(f"mode={mode}: 合计减具名桶 = {gap}, 期望 {want} —— {line}")
+    # 全 planned: 4 行就该是「计划邀请 4 人 … 合计 4 人」, 不许有第二个数字把它再数一遍
+    planned = [g.Outcome(g.Record(row=i + 1, name="甲", login="jia"), g.S_PLANNED)
+               for i in range(4)]
+    line = summary_of(planned, "plan")
+    if "计划邀请 4 人" not in line or "合计 4 人" not in line:
+        problems.append(f"全 planned 的汇总不对(4 行该是计划邀请 4 人 + 合计 4 人): {line}")
+    if sum(int(n) for n in re.findall(r"(\d+) 人", line)) != 2 * len(planned):
+        problems.append(f"全 planned 被重复计数了(除合计外还有别的数字): {line}")
+    # 没预检的老实说「状态未知」, 不许冒充「计划邀请」
+    line = summary_of([g.Outcome(g.Record(row=1, name="甲", login="jia"), g.S_UNKNOWN)],
+                      "unknown")
+    if "计划邀请" in line:
+        problems.append(f"没预检却报「计划邀请」: {line}")
+    report("汇总行是分区(合计 == 总人数; 差额只能是 ORG_UNTOUCHED)", problems)
 
     print(f"\n===== 落盘/续跑测试: 通过 {len(PASS)} / 失败 {len(FAIL)} =====")
     for title in FAIL:

@@ -19,7 +19,6 @@
 1. 要求一个`dsh/`目录存放日志和skill, 其他没想好,到时候和我一起讨论
 2. 要求一个面向使用者的非常简短的readme,里面只包含使用前提和使用时的命令介绍和例子,
 3. 要求一个面向开发者的略微详细些的architecture,里面里看着写,
-4.  
 `>>> 特别提醒 >>>`
 除`token.txt`不要出现任何敏感信息
 `<<< 特别提醒 <<<`
@@ -30,3 +29,11 @@
 > 输入不再接受 `.txt` 名单与标准输入, **只收 csv/xlsx 表格**
 > (表格之外可以在命令行再补一个用户名或邮箱)。详见 [README.md](README.md)
 > 与 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+> **后续(2026-10-05)**: 结构定了。源码按职责拆成 `inviter/` 包(14 个模块),
+> 仓库根的 `github_inviter.py` 退化为转发用的**兼容层**、但仍然是入口 ——
+> 命令、参数、输出一律没变, 旧文档与旧测试都照旧能用。
+> 日志与 skill 实际落在 **`.dsh/`**(即上面写的 `dsh/`, 已统一命名)。
+> 依赖方向与兼容层约定见 [ARCHITECTURE.md](ARCHITECTURE.md) 第二节;
+> 这次拆分的过程记录见
+> [.dsh/logs/2026-10-05-split-into-modules.md](.dsh/logs/2026-10-05-split-into-modules.md)。

@@ -1,4 +1,4 @@
-# dsh/
+# .dsh/
 
 这个目录是给 DSH(AI 协作)用的工作区, 不属于脚本运行所需。
 
@@ -18,9 +18,8 @@
 |---|---|
 | [`github-org-team-invite`](skills/github-org-team-invite/SKILL.md) | 跑 / 排查 / 核对批量组织与 team 邀请时。含铁律(先 dry-run、先小批量)、标准流程、常见症状对照表、以及「用户名和邮箱对不上」这类实测踩坑 |
 
-> 注: 这个目录是给 AI 读的运行手册。目前放在 `dsh/skills/` 下按需求归档;
-> 若要让 DSH 自动发现它, 把同样的 `SKILL.md` 放到工作区的 `.dsh/skills/<名字>/` 即可
-> (`.agents/skills/` 是仓库级, `.dsh/skills/` 是工作区级)。
+> 注: 这个目录是给 AI 读的运行手册。`SKILL.md` 放在 `.dsh/skills/<名字>/` 下,
+> DSH 会自动发现它(`.agents/skills/` 是仓库级, `.dsh/skills/` 是工作区级)。
 
 ## 日志约定
 
@@ -33,3 +32,5 @@
 | [`2026-10-04-pending-invite-misdiagnosis.md`](logs/2026-10-04-pending-invite-misdiagnosis.md) | 「待对方接受组织邀请」查不到头: 其实两处用户名拼写错了; 含我一次错误方向(自行加的活查)的复盘与被还原; 「网页搜得到 ≠ 用户名存在」 |
 | [`2026-10-04-input-narrowing-and-interactive-prompts.md`](logs/2026-10-04-input-narrowing-and-interactive-prompts.md) | 砍掉 `.txt`/管道输入; `--cols` 与表头行拆开; 表头认不出时改成问用户; 三个自己引入的 bug(含 Windows 上 `DEVNULL` 的 `isatty()` 陷阱) |
 | [`2026-10-04-pre-push-cleanup.md`](logs/2026-10-04-pre-push-cleanup.md) | 推送前的清理: 干净克隆才发现夹具从没入库(45 项挂 27 项); 补历史扫描器 `scan_pii_history.py` 与 `.gitattributes`; 删掉 `reference/` 与本地敏感数据 |
+| [`2026-10-05-split-into-modules.md`](logs/2026-10-05-split-into-modules.md) | 把 2047 行单文件拆成 `inviter/` 包(入口不变, `github_inviter.py` 变兼容层); 快照逐字节 diff 证明纯搬家; 踩到「monkeypatch 随代码静默失效」与「`Path(__file__)` 隐形依赖」; 末尾附这次顺带修掉的文档坏链与过时路径 |
+| [`2026-10-05-summary-partition.md`](logs/2026-10-05-summary-partition.md) | 汇总行「计划邀请 4 人 … 跳过 4 人」是同一批人数了两遍(12 行的表读出 22 人); 末尾改成「合计」+ 拆归类集合 + 新增 `unknown` 状态; `--no-preflight + --execute` 从静默改成出声。含两次自我纠正: 把一个**故意的**设计误判成 bug、以及自己造的新标签「本次没动」一眼被用户看穿 |
